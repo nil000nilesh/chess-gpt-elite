@@ -1,10 +1,37 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import ChessTrainingApp from './App.jsx'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <ChessTrainingApp />
-  </React.StrictMode>,
-)
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChessGPT Elite - AI Chess Training</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Playfair+Display:wght@600;700;800&display=swap');
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        }
+        
+        .chess-font {
+            font-family: 'Playfair Display', serif;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .float-animate {
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        .board-glow {
+            box-shadow: 0 0 30px rgba(217, 119, 6, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.jsx"></script>
+</body>
+</html>
