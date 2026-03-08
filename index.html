@@ -467,6 +467,21 @@
             'b': { 'k': '♚', 'q': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟' }
         };
 
+        const BOARD_THEMES = [
+            { id: 'green', name: 'Green', light: '#eeeed2', dark: '#769656', border: '#4a7c34', lastLight: '#f6f669', lastDark: '#baca2b', labelLight: '#769656', labelDark: '#eeeed2', glow: 'rgba(76, 150, 56, 0.4)' },
+            { id: 'brown', name: 'Brown', light: '#f0d9b5', dark: '#b58863', border: '#8b5e3c', lastLight: '#cdd16a', lastDark: '#aaa23a', labelLight: '#b58863', labelDark: '#f0d9b5', glow: 'rgba(139, 94, 60, 0.4)' },
+            { id: 'blue', name: 'Blue', light: '#dee3e6', dark: '#8ca2ad', border: '#607d8b', lastLight: '#c8d85e', lastDark: '#9aab3a', labelLight: '#8ca2ad', labelDark: '#dee3e6', glow: 'rgba(96, 125, 139, 0.4)' },
+            { id: 'purple', name: 'Purple', light: '#e8e0f0', dark: '#9070a0', border: '#6d4c7d', lastLight: '#d0c850', lastDark: '#a09830', labelLight: '#9070a0', labelDark: '#e8e0f0', glow: 'rgba(109, 76, 125, 0.4)' },
+            { id: 'tournament', name: 'Tournament', light: '#ececd7', dark: '#4c946a', border: '#2d6b4a', lastLight: '#f5f57a', lastDark: '#a8c840', labelLight: '#4c946a', labelDark: '#ececd7', glow: 'rgba(45, 107, 74, 0.4)' },
+            { id: 'wood', name: 'Wood', light: '#e8c99b', dark: '#a47443', border: '#7a5230', lastLight: '#d4c048', lastDark: '#b09828', labelLight: '#a47443', labelDark: '#e8c99b', glow: 'rgba(122, 82, 48, 0.4)' },
+            { id: 'marble', name: 'Marble', light: '#f5f5f0', dark: '#8b8b83', border: '#666660', lastLight: '#d8d860', lastDark: '#a0a040', labelLight: '#8b8b83', labelDark: '#f5f5f0', glow: 'rgba(102, 102, 96, 0.4)' },
+            { id: 'ice', name: 'Ice', light: '#e0e8ef', dark: '#7b9baf', border: '#5a7a8e', lastLight: '#c0d860', lastDark: '#90a838', labelLight: '#7b9baf', labelDark: '#e0e8ef', glow: 'rgba(90, 122, 142, 0.4)' },
+            { id: 'walnut', name: 'Walnut', light: '#dab886', dark: '#a47443', border: '#7a5230', lastLight: '#d0b840', lastDark: '#a89028', labelLight: '#a47443', labelDark: '#dab886', glow: 'rgba(122, 82, 48, 0.4)' },
+            { id: 'canvas', name: 'Canvas', light: '#d7b899', dark: '#8b6e4e', border: '#6a5238', lastLight: '#c8b050', lastDark: '#988830', labelLight: '#8b6e4e', labelDark: '#d7b899', glow: 'rgba(106, 82, 56, 0.4)' },
+            { id: 'ocean', name: 'Ocean', light: '#d5e5f0', dark: '#5889a8', border: '#3d6680', lastLight: '#b8d058', lastDark: '#88a030', labelLight: '#5889a8', labelDark: '#d5e5f0', glow: 'rgba(61, 102, 128, 0.4)' },
+            { id: 'coral', name: 'Coral', light: '#f0e0d8', dark: '#c07860', border: '#9a5840', lastLight: '#d8c050', lastDark: '#b09830', labelLight: '#c07860', labelDark: '#f0e0d8', glow: 'rgba(154, 88, 64, 0.4)' },
+        ];
+
         const ChessApp = () => {
             const [gameState, setGameState] = useState(() => parseFEN(INITIAL_FEN));
             const [selectedSquare, setSelectedSquare] = useState(null);
@@ -485,6 +500,8 @@
             const [userGames, setUserGames] = useState([]);
             const [loadingGames, setLoadingGames] = useState(false);
             const [playerStats, setPlayerStats] = useState(null);
+            const [boardTheme, setBoardTheme] = useState(BOARD_THEMES[0]);
+            const [showThemeSelector, setShowThemeSelector] = useState(false);
 
             const fetchPuzzle = async () => {
                 try {
@@ -624,12 +641,35 @@
             const inCheck = isInCheck(gameState.board, gameState.turn);
             const kingPos = findKing(gameState.board, gameState.turn);
 
+            // Render 3D piece
+            const renderPiece3D = (piece) => {
+                const isWhite = piece.color === WHITE;
+                const symbol = PIECE_SYMBOLS[piece.color][piece.type];
+                const style = isWhite ? {
+                    color: '#ffffff',
+                    WebkitTextStroke: '1px #555555',
+                    textShadow: '0 2px 4px rgba(0,0,0,0.6), 0 4px 8px rgba(0,0,0,0.3), 1px 1px 0 #cccccc, -1px -1px 0 #e0e0e0, 0 0 10px rgba(255,255,255,0.3)',
+                    filter: 'drop-shadow(0 3px 3px rgba(0,0,0,0.4))',
+                    transform: 'translateY(-1px)',
+                } : {
+                    color: '#1a1a1a',
+                    WebkitTextStroke: '1px #000000',
+                    textShadow: '0 2px 4px rgba(0,0,0,0.6), 0 4px 8px rgba(0,0,0,0.3), 1px 1px 0 #444444, -1px -1px 0 #333333, 0 0 8px rgba(0,0,0,0.5)',
+                    filter: 'drop-shadow(0 3px 3px rgba(0,0,0,0.5))',
+                    transform: 'translateY(-1px)',
+                };
+                return React.createElement('span', { className: 'chess-piece-3d', style }, symbol);
+            };
+
             // Render board
             const renderBoard = () => {
                 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+                const t = boardTheme;
 
-                return React.createElement('div', { className: 'inline-block border-8 border-amber-900 shadow-2xl rounded-xl overflow-hidden board-glow' },
-                    // Board squares
+                return React.createElement('div', {
+                    className: 'inline-block shadow-2xl rounded-xl overflow-hidden',
+                    style: { border: `8px solid ${t.border}`, boxShadow: `0 0 30px ${t.glow}, 0 10px 40px rgba(0,0,0,0.5)` }
+                },
                     Array.from({ length: 8 }, (_, r) =>
                         React.createElement('div', { key: r, className: 'flex' },
                             Array.from({ length: 8 }, (_, c) => {
@@ -641,8 +681,8 @@
                                 const isLastMove = lastMove && ((lastMove.from[0] === r && lastMove.from[1] === c) || (lastMove.to[0] === r && lastMove.to[1] === c));
                                 const isKingInCheck = inCheck && kingPos && kingPos[0] === r && kingPos[1] === c;
 
-                                let bgClass = isLight ? 'bg-amber-100' : 'bg-amber-700';
-                                if (isLastMove) bgClass = isLight ? 'square-lastmove-light' : 'square-lastmove-dark';
+                                let bgColor = isLight ? t.light : t.dark;
+                                if (isLastMove) bgColor = isLight ? t.lastLight : t.lastDark;
 
                                 let extraClass = '';
                                 if (isSelected) extraClass += ' square-selected';
@@ -652,17 +692,13 @@
 
                                 return React.createElement('div', {
                                     key: `${r}-${c}`,
-                                    className: `w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-3xl sm:text-4xl font-bold cursor-pointer select-none relative ${bgClass}${extraClass}`,
+                                    className: `w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-4xl sm:text-5xl font-bold cursor-pointer select-none relative${extraClass}`,
+                                    style: { backgroundColor: bgColor },
                                     onClick: () => handleSquareClick(r, c),
                                 },
-                                    piece && React.createElement('span', {
-                                        className: `drop-shadow-md ${piece.color === WHITE ? 'text-white' : 'text-gray-900'}`,
-                                        style: { textShadow: piece.color === WHITE ? '0 1px 3px rgba(0,0,0,0.7)' : '0 1px 2px rgba(255,255,255,0.3)' }
-                                    }, PIECE_SYMBOLS[piece.color][piece.type]),
-                                    // File label on bottom row
-                                    r === 7 && React.createElement('span', { className: `absolute bottom-0.5 right-1 text-xs font-semibold ${isLight ? 'text-amber-700' : 'text-amber-100'}` }, files[c]),
-                                    // Rank label on first column
-                                    c === 0 && React.createElement('span', { className: `absolute top-0.5 left-1 text-xs font-semibold ${isLight ? 'text-amber-700' : 'text-amber-100'}` }, 8 - r)
+                                    piece && renderPiece3D(piece),
+                                    r === 7 && React.createElement('span', { className: 'absolute bottom-0.5 right-1 text-xs font-semibold', style: { color: isLight ? t.labelLight : t.labelDark } }, files[c]),
+                                    c === 0 && React.createElement('span', { className: 'absolute top-0.5 left-1 text-xs font-semibold', style: { color: isLight ? t.labelLight : t.labelDark } }, 8 - r)
                                 );
                             })
                         )
@@ -683,7 +719,7 @@
                                 key: p,
                                 onClick: () => handlePromotion(p),
                                 className: 'w-16 h-16 text-4xl bg-slate-700 hover:bg-slate-600 rounded-xl flex items-center justify-center border border-slate-500 transition-colors'
-                            }, PIECE_SYMBOLS[color][p]))
+                            }, renderPiece3D({ color, type: p })))
                         )
                     )
                 );
@@ -719,9 +755,42 @@
                 );
             };
 
+            // Theme selector
+            const renderThemeSelector = () => {
+                const themesToShow = showThemeSelector ? BOARD_THEMES : BOARD_THEMES.slice(0, 4);
+                return React.createElement('div', { className: 'bg-slate-800 rounded-xl p-4 border border-slate-700/50' },
+                    React.createElement('div', { className: 'flex items-center justify-between mb-3' },
+                        React.createElement('h3', { className: 'text-amber-400 font-semibold' }, 'Board Style'),
+                        React.createElement('button', {
+                            onClick: () => setShowThemeSelector(!showThemeSelector),
+                            className: 'text-xs text-slate-400 hover:text-slate-300 transition-colors'
+                        }, showThemeSelector ? 'Hide' : 'Show All')
+                    ),
+                    React.createElement('div', { className: `grid ${showThemeSelector ? 'grid-cols-3 sm:grid-cols-4' : 'grid-cols-4'} gap-2` },
+                        themesToShow.map(theme =>
+                            React.createElement('button', {
+                                key: theme.id,
+                                onClick: () => setBoardTheme(theme),
+                                className: `flex flex-col items-center gap-1 p-2 rounded-lg transition-all ${boardTheme.id === theme.id ? 'ring-2 ring-amber-400 bg-slate-700' : 'hover:bg-slate-700/50'}`
+                            },
+                                React.createElement('div', { className: 'w-8 h-8 rounded overflow-hidden flex flex-wrap border border-slate-600' },
+                                    React.createElement('div', { style: { width: '50%', height: '50%', backgroundColor: theme.light } }),
+                                    React.createElement('div', { style: { width: '50%', height: '50%', backgroundColor: theme.dark } }),
+                                    React.createElement('div', { style: { width: '50%', height: '50%', backgroundColor: theme.dark } }),
+                                    React.createElement('div', { style: { width: '50%', height: '50%', backgroundColor: theme.light } })
+                                ),
+                                React.createElement('span', { className: 'text-xs text-slate-300' }, theme.name)
+                            )
+                        )
+                    )
+                );
+            };
+
             // Game info panel
             const renderGameInfo = () => {
                 return React.createElement('div', { className: 'space-y-4' },
+                    // Board style selector
+                    renderThemeSelector(),
                     // Turn indicator
                     React.createElement('div', { className: 'bg-slate-800 rounded-xl p-4 border border-slate-700/50' },
                         React.createElement('div', { className: 'flex items-center justify-between' },
