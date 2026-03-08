@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+    @apply transition-colors duration-200;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    @apply bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950;
+}
+
+@keyframes float {
+    0%, 100% {
+        transform: translateY(0px);
+    }
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+.float-animate {
+    animation: float 3s ease-in-out infinite;
+}
+
+.chess-font {
+    font-family: 'Playfair Display', serif;
+}
+
+.board-glow {
+    box-shadow: 0 0 30px rgba(217, 119, 6, 0.4);
+}
