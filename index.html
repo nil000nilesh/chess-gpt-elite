@@ -543,6 +543,10 @@ const ChessApp = ({ user }) => {
     const [activeTab,           setActiveTab]           = useState('play');
     const [currentPuzzle,       setCurrentPuzzle]       = useState(null);
     const [puzzleStatus,        setPuzzleStatus]        = useState('idle');
+    const [puzzleGameState,     setPuzzleGameState]     = useState(()=>parseFEN(INITIAL_FEN));
+    const [puzzleSolution,      setPuzzleSolution]      = useState([]);
+    const [puzzleMoveIdx,       setPuzzleMoveIdx]       = useState(0);
+    const [puzzleFeedback,      setPuzzleFeedback]      = useState('');
     const [playerUsername,      setPlayerUsername]      = useState('magnus');
     const [userGames,           setUserGames]           = useState([]);
     const [loadingGames,        setLoadingGames]        = useState(false);
@@ -599,17 +603,165 @@ const ChessApp = ({ user }) => {
         } catch(e){ console.error('account',e); }
     };
 
+    // ── SAN → Move converter (for PGN replay) ──
+    const sanToMove = (state, san) => {
+        const clean = san.replace(/[+#?!=x]/g,'').replace('O-O-O','q-castle').replace('O-O','k-castle');
+        const legal = generateLegalMoves(state, state.turn);
+        if (san.startsWith('O-O-O')||san==='0-0-0') return legal.find(m=>m.special?.type==='castle'&&m.to[1]===2)||null;
+        if (san.startsWith('O-O')||san==='0-0')    return legal.find(m=>m.special?.type==='castle'&&m.to[1]===6)||null;
+        const files='abcdefgh', ranks='87654321';
+        const isPromo = san.includes('=');
+        const promoP  = isPromo ? san.slice(san.indexOf('=')+1)[0].toLowerCase() : null;
+        // parse destination square
+        const s = clean.replace(/^[KQRBN]/,'');
+        const toFile = s.slice(-2,-1), toRank = s.slice(-1);
+        const toC = files.indexOf(toFile), toR = ranks.indexOf(toRank);
+        if (toC<0||toR<0) return null;
+        const isCapt = san.includes('x');
+        const pieceChar = /^[KQRBN]/.test(san) ? san[0].toLowerCase() : 'p';
+        // disambiguation
+        const disambig = clean.replace(/^[KQRBN]/,'').slice(0,-2);
+        return legal.find(m => {
+            if (m.to[0]!==toR||m.to[1]!==toC) return false;
+            if (m.piece!==pieceChar) return false;
+            if (isPromo && m.special?.promote!==promoP) return false;
+            if (disambig.length===1) {
+                if (/[a-h]/.test(disambig) && m.from[1]!==files.indexOf(disambig)) return false;
+                if (/[1-8]/.test(disambig) && m.from[0]!==ranks.indexOf(disambig)) return false;
+            }
+            if (disambig.length===2) {
+                if (m.from[1]!==files.indexOf(disambig[0])||m.from[0]!==ranks.indexOf(disambig[1])) return false;
+            }
+            return true;
+        }) || null;
+    };
+
+    const replayPGN = (pgn, targetPly) => {
+        // Strip PGN headers and comments, get move tokens
+        const stripped = pgn.replace(/\[.*?\]\s*/g,'').replace(/\{[^}]*\}/g,'').replace(/\d+\.\s*/g,'').trim();
+        const tokens = stripped.split(/\s+/).filter(t=>t&&!/^\d/.test(t)&&t!=='*'&&t!=='1-0'&&t!=='0-1'&&t!=='1/2-1/2');
+        let state = parseFEN(INITIAL_FEN);
+        for (let i=0; i<Math.min(targetPly, tokens.length); i++) {
+            const move = sanToMove(state, tokens[i]);
+            if (!move) break;
+            state = applyMove(state, move);
+        }
+        return state;
+    };
+
     // ── Daily Puzzle ──
     const fetchPuzzle = async () => {
         try {
-            setPuzzleStatus('loading');
-            const headers = lichessToken ? {'Authorization':`Bearer ${lichessToken}`} : {};
+            setPuzzleStatus('loading'); setPuzzleFeedback('');
+            const headers = lichessToken ? {'Authorization':`Bearer ${lichessToken}`,'Accept':'application/json'} : {'Accept':'application/json'};
             const r = await fetch('https://lichess.org/api/puzzle/daily', {headers});
-            if (!r.ok) throw new Error('Puzzle fetch failed: '+r.status);
+            if (!r.ok) throw new Error('HTTP '+r.status);
             const d = await r.json();
-            if (d?.puzzle) { setCurrentPuzzle(d.puzzle); setPuzzleStatus('playing'); }
-            else throw new Error('No puzzle data');
-        } catch(e) { console.error(e); setPuzzleStatus('error'); }
+            if (!d?.puzzle || !d?.game) throw new Error('Invalid puzzle response');
+            // Replay PGN to puzzle start position
+            const startState = replayPGN(d.game.pgn, d.puzzle.initialPly);
+            setPuzzleGameState(startState);
+            setCurrentPuzzle(d.puzzle);
+            setPuzzleSolution(d.puzzle.solution||[]);
+            setPuzzleMoveIdx(0);
+            setPuzzleStatus('playing');
+        } catch(e) { console.error('fetchPuzzle',e); setPuzzleStatus('error'); }
+    };
+
+    // ── Puzzle move handler (UCI format: e2e4) ──
+    const handlePuzzleMove = (row, col) => {
+        if (puzzleStatus!=='playing'||!currentPuzzle) return;
+        // simplified: just apply legal moves for now (full solution check can be added)
+        const piece = puzzleGameState.board[row][col];
+        if (piece && piece.color===puzzleGameState.turn) {
+            setPuzzleGameState(prev=>{
+                const sel = prev._selected;
+                if (sel) {
+                    const legal = generateLegalMoves(prev, prev.turn);
+                    const m = legal.find(mv=>mv.from[0]===sel[0]&&mv.from[1]===sel[1]&&mv.to[0]===row&&mv.to[1]===col);
+                    if (m) {
+                        // Check if correct solution move
+                        const uci = puzzleSolution[puzzleMoveIdx];
+                        const files='abcdefgh',ranks='87654321';
+                        const expFrom=[ranks.indexOf(uci[1]),files.indexOf(uci[0])];
+                        const expTo  =[ranks.indexOf(uci[3]),files.indexOf(uci[2])];
+                        const isCorrect = sel[0]===expFrom[0]&&sel[1]===expFrom[1]&&row===expTo[0]&&col===expTo[1];
+                        if (isCorrect) {
+                            let ns = applyMove(prev, m); delete ns._selected;
+                            const nextIdx = puzzleMoveIdx+1;
+                            if (nextIdx>=puzzleSolution.length) { setPuzzleFeedback('✅ Puzzle Solved! 🎉'); setPuzzleStatus('solved'); return ns; }
+                            // Auto-play opponent response
+                            const oppUci = puzzleSolution[nextIdx];
+                            if (oppUci) {
+                                const oppLegal = generateLegalMoves(ns, ns.turn);
+                                const of1=[ranks.indexOf(oppUci[1]),files.indexOf(oppUci[0])];
+                                const ot1=[ranks.indexOf(oppUci[3]),files.indexOf(oppUci[2])];
+                                const oppM = oppLegal.find(mv=>mv.from[0]===of1[0]&&mv.from[1]===of1[1]&&mv.to[0]===ot1[0]&&mv.to[1]===ot1[1]);
+                                if (oppM) ns = applyMove(ns, oppM);
+                            }
+                            setPuzzleMoveIdx(nextIdx+1); setPuzzleFeedback('✅ Correct! Continue…'); return ns;
+                        } else { setPuzzleFeedback('❌ Wrong move, try again'); delete prev._selected; return {...prev, _selected:null}; }
+                    }
+                }
+                return {...prev, _selected:[row,col]};
+            });
+        } else {
+            setPuzzleGameState(prev=>{
+                const sel = prev._selected;
+                if (sel) {
+                    const legal = generateLegalMoves(prev, prev.turn);
+                    const m = legal.find(mv=>mv.from[0]===sel[0]&&mv.from[1]===sel[1]&&mv.to[0]===row&&mv.to[1]===col);
+                    if (m) {
+                        const uci = puzzleSolution[puzzleMoveIdx];
+                        const files='abcdefgh',ranks='87654321';
+                        const expFrom=[ranks.indexOf(uci[1]),files.indexOf(uci[0])];
+                        const expTo  =[ranks.indexOf(uci[3]),files.indexOf(uci[2])];
+                        const isCorrect = sel[0]===expFrom[0]&&sel[1]===expFrom[1]&&row===expTo[0]&&col===expTo[1];
+                        if (isCorrect) {
+                            let ns = applyMove(prev, m); delete ns._selected;
+                            const nextIdx = puzzleMoveIdx+1;
+                            if (nextIdx>=puzzleSolution.length) { setPuzzleFeedback('✅ Puzzle Solved! 🎉'); setPuzzleStatus('solved'); return ns; }
+                            const oppUci = puzzleSolution[nextIdx];
+                            if (oppUci) {
+                                const oppLegal = generateLegalMoves(ns, ns.turn);
+                                const of1=[ranks.indexOf(oppUci[1]),files.indexOf(oppUci[0])];
+                                const ot1=[ranks.indexOf(oppUci[3]),files.indexOf(oppUci[2])];
+                                const oppM = oppLegal.find(mv=>mv.from[0]===of1[0]&&mv.from[1]===of1[1]&&mv.to[0]===ot1[0]&&mv.to[1]===ot1[1]);
+                                if (oppM) ns = applyMove(ns, oppM);
+                            }
+                            setPuzzleMoveIdx(nextIdx+1); setPuzzleFeedback('✅ Correct! Continue…'); return ns;
+                        } else { setPuzzleFeedback('❌ Wrong move'); return {...prev, _selected:null}; }
+                    }
+                }
+                return {...prev, _selected:null};
+            });
+        }
+    };
+
+    const renderPuzzleBoard = () => {
+        const files=['a','b','c','d','e','f','g','h'], t=boardTheme, ps=puzzleGameState;
+        return (
+            <div className="inline-block shadow-2xl rounded-xl overflow-hidden" style={{border:`8px solid ${t.border}`,boxShadow:`0 0 40px ${t.glow},0 12px 40px rgba(0,0,0,0.55)`}}>
+                {Array.from({length:8},(_,r)=>(
+                    <div key={r} className="flex">
+                        {Array.from({length:8},(_,c)=>{
+                            const piece=ps.board[r][c], isLight=(r+c)%2===0;
+                            const isSel=ps._selected&&ps._selected[0]===r&&ps._selected[1]===c;
+                            let bg=isLight?t.light:t.dark, cls='';
+                            if (isSel) cls+=' square-selected';
+                            return (
+                                <div key={`${r}-${c}`} className={`w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-4xl sm:text-5xl font-bold cursor-pointer select-none relative${cls}`}
+                                    style={{backgroundColor:bg}} onClick={()=>handlePuzzleMove(r,c)}>
+                                    {piece&&<span className="chess-piece-3d" style={getPieceStyle(piece.color,pieceStyle)}>{PIECE_SYMBOLS[piece.color][piece.type]}</span>}
+                                    {r===7&&<span className="absolute bottom-0.5 right-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}
+                                    {c===0&&<span className="absolute top-0.5 left-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ))}
+            </div>
+        );
     };
 
     // ── Puzzle Activity ──
@@ -883,6 +1035,11 @@ const ChessApp = ({ user }) => {
                         <div className="flex items-center gap-2">
                             {user.photoURL&&<img src={user.photoURL} alt="u" className="w-8 h-8 rounded-full border border-amber-400/30" />}
                             <span className="text-slate-400 text-sm hidden sm:block">{user.displayName?.split(' ')[0]}</span>
+                            <button onClick={()=>auth.signOut()}
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border border-red-700/40 text-red-400 hover:bg-red-800/30"
+                                title="Sign Out">
+                                🚪 Logout
+                            </button>
                         </div>
                     )}
                 </div>
@@ -976,18 +1133,58 @@ const ChessApp = ({ user }) => {
                         <div className="lg:col-span-2 rounded-2xl p-6 border border-slate-700/40" style={{background:'rgba(15,23,42,0.7)'}}>
                             {puzzleStatus==='loading'
                                 ? <div className="flex items-center justify-center h-80"><div className="text-center"><div className="text-6xl mb-4 animate-pulse">♘</div><p className="text-slate-400">Loading puzzle…</p></div></div>
-                                : <div className="flex flex-col items-center">
-                                    <div className="mb-6">{renderBoard()}</div>
-                                    {currentPuzzle&&<div className="w-full mt-4 p-4 rounded-lg border border-amber-500/25" style={{background:'rgba(30,41,59,0.7)'}}>
-                                        <p className="text-amber-400 font-semibold text-sm">Theme: {currentPuzzle.theme}</p>
-                                        <p className="text-slate-300 text-sm mt-1">Rating: {currentPuzzle.rating}</p>
-                                    </div>}
-                                  </div>
+                                : puzzleStatus==='idle'
+                                    ? <div className="flex items-center justify-center h-80 flex-col gap-4">
+                                        <div className="text-6xl">🧩</div>
+                                        <p className="text-slate-400">Daily puzzle load karne ke liye button dabao</p>
+                                        <button onClick={fetchPuzzle} className="px-6 py-3 bg-blue-700 text-white rounded-xl font-semibold text-sm hover:bg-blue-600">Load Daily Puzzle</button>
+                                      </div>
+                                    : puzzleStatus==='error'
+                                        ? <div className="flex items-center justify-center h-80 flex-col gap-4">
+                                            <div className="text-5xl">⚠️</div>
+                                            <p className="text-red-400 text-sm">Puzzle load nahi hua. Retry karo.</p>
+                                            <button onClick={fetchPuzzle} className="px-5 py-2 bg-blue-700 text-white rounded-lg text-sm">Retry</button>
+                                          </div>
+                                        : <div className="flex flex-col items-center">
+                                            {/* Turn indicator */}
+                                            <div className="mb-3 text-sm font-semibold" style={{color:puzzleGameState.turn===WHITE?'#e2e8f0':'#94a3b8'}}>
+                                                {puzzleGameState.turn===WHITE?'⬜ White':'⬛ Black'} to move
+                                            </div>
+                                            <div className="mb-4">{renderPuzzleBoard()}</div>
+                                            {/* Feedback */}
+                                            {puzzleFeedback&&(
+                                                <div className={`w-full mt-3 p-3 rounded-xl text-sm font-semibold text-center ${puzzleFeedback.startsWith('✅')?'text-green-400':'text-red-400'}`}
+                                                    style={{background:puzzleFeedback.startsWith('✅')?'rgba(22,101,52,0.3)':'rgba(127,29,29,0.3)'}}>
+                                                    {puzzleFeedback}
+                                                </div>
+                                            )}
+                                            {currentPuzzle&&(
+                                                <div className="w-full mt-4 p-4 rounded-lg border border-amber-500/25" style={{background:'rgba(30,41,59,0.7)'}}>
+                                                    <div className="flex justify-between items-center flex-wrap gap-2">
+                                                        <div>
+                                                            <p className="text-amber-400 font-semibold text-sm">Themes: {currentPuzzle.themes?.join(', ')||'–'}</p>
+                                                            <p className="text-slate-400 text-xs mt-1">Rating: {currentPuzzle.rating} • Plays: {currentPuzzle.plays?.toLocaleString()}</p>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <p className="text-slate-400 text-xs">Move {Math.min(puzzleMoveIdx+1, puzzleSolution.length)}/{puzzleSolution.length}</p>
+                                                            <a href={`https://lichess.org/training/${currentPuzzle.id}`} target="_blank"
+                                                                className="text-xs text-blue-400 hover:text-blue-300">Lichess ↗</a>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                          </div>
                             }
                         </div>
                         <div className="space-y-4">
                             <StylePanel boardTheme={boardTheme} setBoardTheme={setBoardTheme} pieceStyle={pieceStyle} setPieceStyle={setPieceStyle} />
                             <button onClick={fetchPuzzle} className="w-full px-6 py-3 bg-blue-700 text-white rounded-xl hover:bg-blue-600 font-semibold text-sm">🔄 New Puzzle</button>
+                            {puzzleStatus==='playing'&&(
+                                <button onClick={()=>{setPuzzleFeedback('💡 Solution: '+puzzleSolution.join(' → '))}}
+                                    className="w-full px-6 py-2 border border-amber-700/40 text-amber-400 rounded-xl text-sm hover:bg-amber-900/20">
+                                    💡 Show Solution
+                                </button>
+                            )}
                         </div>
                     </div>
                 )}
