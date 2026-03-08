@@ -627,5 +627,3 @@ const ChessTrainingApp = () => {
     </div>
   );
 };
-
-export default ChessTrainingApp;
