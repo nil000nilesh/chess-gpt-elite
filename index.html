@@ -12,179 +12,871 @@
         @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-10px); } }
         .float-animate { animation: float 3s ease-in-out infinite; }
         .board-glow { box-shadow: 0 0 30px rgba(217, 119, 6, 0.4); }
+        .square-selected { box-shadow: inset 0 0 0 3px rgba(59, 130, 246, 0.8); }
+        .square-legal { position: relative; }
+        .square-legal::after {
+            content: '';
+            position: absolute;
+            width: 30%;
+            height: 30%;
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: 50%;
+        }
+        .square-capture { position: relative; }
+        .square-capture::after {
+            content: '';
+            position: absolute;
+            width: 90%;
+            height: 90%;
+            border: 4px solid rgba(0, 0, 0, 0.25);
+            border-radius: 50%;
+            box-sizing: border-box;
+        }
+        .square-check { background: radial-gradient(circle, #ef4444 0%, transparent 70%) !important; }
+        .square-lastmove-light { background-color: #baca44 !important; }
+        .square-lastmove-dark { background-color: #8b9a2b !important; }
     </style>
 </head>
 <body>
     <div id="root"></div>
     <script type="module">
-        import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
+        import React, { useState, useEffect, useCallback } from 'https://esm.sh/react@18.2.0';
         import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
-        
+
+        // ===== CHESS ENGINE =====
+
+        const PIECE_TYPES = { PAWN: 'p', KNIGHT: 'n', BISHOP: 'b', ROOK: 'r', QUEEN: 'q', KING: 'k' };
+        const WHITE = 'w';
+        const BLACK = 'b';
+
+        // Parse FEN string into board state
+        function parseFEN(fen) {
+            const parts = fen.split(' ');
+            const rows = parts[0].split('/');
+            const board = Array(8).fill(null).map(() => Array(8).fill(null));
+
+            for (let r = 0; r < 8; r++) {
+                let c = 0;
+                for (const ch of rows[r]) {
+                    if (ch >= '1' && ch <= '8') {
+                        c += parseInt(ch);
+                    } else {
+                        const color = ch === ch.toUpperCase() ? WHITE : BLACK;
+                        board[r][c] = { type: ch.toLowerCase(), color };
+                        c++;
+                    }
+                }
+            }
+
+            return {
+                board,
+                turn: parts[1] || WHITE,
+                castling: parts[2] || 'KQkq',
+                enPassant: parts[3] || '-',
+                halfMoves: parseInt(parts[4]) || 0,
+                fullMoves: parseInt(parts[5]) || 1,
+            };
+        }
+
+        // Convert board state back to FEN
+        function toFEN(state) {
+            let fen = '';
+            for (let r = 0; r < 8; r++) {
+                let empty = 0;
+                for (let c = 0; c < 8; c++) {
+                    const piece = state.board[r][c];
+                    if (!piece) {
+                        empty++;
+                    } else {
+                        if (empty > 0) { fen += empty; empty = 0; }
+                        fen += piece.color === WHITE ? piece.type.toUpperCase() : piece.type;
+                    }
+                }
+                if (empty > 0) fen += empty;
+                if (r < 7) fen += '/';
+            }
+            fen += ` ${state.turn} ${state.castling || '-'} ${state.enPassant || '-'} ${state.halfMoves} ${state.fullMoves}`;
+            return fen;
+        }
+
+        function cloneBoard(board) {
+            return board.map(row => row.map(p => p ? { ...p } : null));
+        }
+
+        function inBounds(r, c) {
+            return r >= 0 && r < 8 && c >= 0 && c < 8;
+        }
+
+        // Find king position
+        function findKing(board, color) {
+            for (let r = 0; r < 8; r++)
+                for (let c = 0; c < 8; c++)
+                    if (board[r][c] && board[r][c].type === 'k' && board[r][c].color === color)
+                        return [r, c];
+            return null;
+        }
+
+        // Check if a square is attacked by the given color
+        function isAttackedBy(board, row, col, byColor) {
+            // Pawn attacks
+            const pawnDir = byColor === WHITE ? 1 : -1;
+            for (const dc of [-1, 1]) {
+                const pr = row + pawnDir, pc = col + dc;
+                if (inBounds(pr, pc) && board[pr][pc] && board[pr][pc].color === byColor && board[pr][pc].type === 'p')
+                    return true;
+            }
+
+            // Knight attacks
+            const knightMoves = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+            for (const [dr, dc] of knightMoves) {
+                const nr = row + dr, nc = col + dc;
+                if (inBounds(nr, nc) && board[nr][nc] && board[nr][nc].color === byColor && board[nr][nc].type === 'n')
+                    return true;
+            }
+
+            // King attacks
+            for (let dr = -1; dr <= 1; dr++)
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue;
+                    const nr = row + dr, nc = col + dc;
+                    if (inBounds(nr, nc) && board[nr][nc] && board[nr][nc].color === byColor && board[nr][nc].type === 'k')
+                        return true;
+                }
+
+            // Sliding pieces (bishop, rook, queen)
+            const directions = [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]];
+            for (let d = 0; d < 8; d++) {
+                const [dr, dc] = directions[d];
+                const isDiag = d < 4;
+                for (let i = 1; i < 8; i++) {
+                    const nr = row + dr * i, nc = col + dc * i;
+                    if (!inBounds(nr, nc)) break;
+                    if (board[nr][nc]) {
+                        if (board[nr][nc].color === byColor) {
+                            const t = board[nr][nc].type;
+                            if (t === 'q') return true;
+                            if (isDiag && t === 'b') return true;
+                            if (!isDiag && t === 'r') return true;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        function isInCheck(board, color) {
+            const king = findKing(board, color);
+            if (!king) return false;
+            return isAttackedBy(board, king[0], king[1], color === WHITE ? BLACK : WHITE);
+        }
+
+        // Generate pseudo-legal moves (before check filtering)
+        function generatePseudoMoves(state, color) {
+            const moves = [];
+            const { board, castling, enPassant } = state;
+            const dir = color === WHITE ? -1 : 1;
+            const startRank = color === WHITE ? 6 : 1;
+
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const piece = board[r][c];
+                    if (!piece || piece.color !== color) continue;
+
+                    const addMove = (tr, tc, special) => {
+                        moves.push({ from: [r, c], to: [tr, tc], piece: piece.type, special });
+                    };
+
+                    switch (piece.type) {
+                        case 'p': {
+                            // Forward
+                            if (inBounds(r + dir, c) && !board[r + dir][c]) {
+                                if ((color === WHITE && r + dir === 0) || (color === BLACK && r + dir === 7)) {
+                                    for (const promo of ['q', 'r', 'b', 'n']) addMove(r + dir, c, { type: 'promotion', promote: promo });
+                                } else {
+                                    addMove(r + dir, c);
+                                }
+                                // Double push
+                                if (r === startRank && !board[r + 2 * dir][c]) {
+                                    addMove(r + 2 * dir, c, { type: 'doublePush' });
+                                }
+                            }
+                            // Captures
+                            for (const dc of [-1, 1]) {
+                                const tr = r + dir, tc = c + dc;
+                                if (!inBounds(tr, tc)) continue;
+                                if (board[tr][tc] && board[tr][tc].color !== color) {
+                                    if ((color === WHITE && tr === 0) || (color === BLACK && tr === 7)) {
+                                        for (const promo of ['q', 'r', 'b', 'n']) addMove(tr, tc, { type: 'promotion', promote: promo });
+                                    } else {
+                                        addMove(tr, tc);
+                                    }
+                                }
+                                // En passant
+                                if (enPassant !== '-') {
+                                    const epCol = enPassant.charCodeAt(0) - 97;
+                                    const epRow = 8 - parseInt(enPassant[1]);
+                                    if (tr === epRow && tc === epCol) {
+                                        addMove(tr, tc, { type: 'enPassant' });
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                        case 'n': {
+                            const knightMoves = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+                            for (const [dr, dc] of knightMoves) {
+                                const tr = r + dr, tc = c + dc;
+                                if (inBounds(tr, tc) && (!board[tr][tc] || board[tr][tc].color !== color))
+                                    addMove(tr, tc);
+                            }
+                            break;
+                        }
+                        case 'b': {
+                            for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
+                                for (let i = 1; i < 8; i++) {
+                                    const tr = r + dr * i, tc = c + dc * i;
+                                    if (!inBounds(tr, tc)) break;
+                                    if (board[tr][tc]) {
+                                        if (board[tr][tc].color !== color) addMove(tr, tc);
+                                        break;
+                                    }
+                                    addMove(tr, tc);
+                                }
+                            }
+                            break;
+                        }
+                        case 'r': {
+                            for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+                                for (let i = 1; i < 8; i++) {
+                                    const tr = r + dr * i, tc = c + dc * i;
+                                    if (!inBounds(tr, tc)) break;
+                                    if (board[tr][tc]) {
+                                        if (board[tr][tc].color !== color) addMove(tr, tc);
+                                        break;
+                                    }
+                                    addMove(tr, tc);
+                                }
+                            }
+                            break;
+                        }
+                        case 'q': {
+                            for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]]) {
+                                for (let i = 1; i < 8; i++) {
+                                    const tr = r + dr * i, tc = c + dc * i;
+                                    if (!inBounds(tr, tc)) break;
+                                    if (board[tr][tc]) {
+                                        if (board[tr][tc].color !== color) addMove(tr, tc);
+                                        break;
+                                    }
+                                    addMove(tr, tc);
+                                }
+                            }
+                            break;
+                        }
+                        case 'k': {
+                            for (let dr = -1; dr <= 1; dr++)
+                                for (let dc = -1; dc <= 1; dc++) {
+                                    if (dr === 0 && dc === 0) continue;
+                                    const tr = r + dr, tc = c + dc;
+                                    if (inBounds(tr, tc) && (!board[tr][tc] || board[tr][tc].color !== color))
+                                        addMove(tr, tc);
+                                }
+                            // Castling
+                            const opp = color === WHITE ? BLACK : WHITE;
+                            if (color === WHITE) {
+                                if (castling.includes('K') && !board[7][5] && !board[7][6] && board[7][7]?.type === 'r' && board[7][7]?.color === WHITE) {
+                                    if (!isAttackedBy(board, 7, 4, opp) && !isAttackedBy(board, 7, 5, opp) && !isAttackedBy(board, 7, 6, opp))
+                                        addMove(7, 6, { type: 'castle', rookFrom: [7, 7], rookTo: [7, 5] });
+                                }
+                                if (castling.includes('Q') && !board[7][3] && !board[7][2] && !board[7][1] && board[7][0]?.type === 'r' && board[7][0]?.color === WHITE) {
+                                    if (!isAttackedBy(board, 7, 4, opp) && !isAttackedBy(board, 7, 3, opp) && !isAttackedBy(board, 7, 2, opp))
+                                        addMove(7, 2, { type: 'castle', rookFrom: [7, 0], rookTo: [7, 3] });
+                                }
+                            } else {
+                                if (castling.includes('k') && !board[0][5] && !board[0][6] && board[0][7]?.type === 'r' && board[0][7]?.color === BLACK) {
+                                    if (!isAttackedBy(board, 0, 4, opp) && !isAttackedBy(board, 0, 5, opp) && !isAttackedBy(board, 0, 6, opp))
+                                        addMove(0, 6, { type: 'castle', rookFrom: [0, 7], rookTo: [0, 5] });
+                                }
+                                if (castling.includes('q') && !board[0][3] && !board[0][2] && !board[0][1] && board[0][0]?.type === 'r' && board[0][0]?.color === BLACK) {
+                                    if (!isAttackedBy(board, 0, 4, opp) && !isAttackedBy(board, 0, 3, opp) && !isAttackedBy(board, 0, 2, opp))
+                                        addMove(0, 2, { type: 'castle', rookFrom: [0, 0], rookTo: [0, 3] });
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            return moves;
+        }
+
+        // Filter moves that leave king in check
+        function generateLegalMoves(state, color) {
+            const pseudo = generatePseudoMoves(state, color);
+            return pseudo.filter(move => {
+                const newBoard = cloneBoard(state.board);
+                // Execute move on clone
+                newBoard[move.to[0]][move.to[1]] = newBoard[move.from[0]][move.from[1]];
+                newBoard[move.from[0]][move.from[1]] = null;
+                if (move.special?.type === 'enPassant') {
+                    const capturedRow = move.from[0];
+                    newBoard[capturedRow][move.to[1]] = null;
+                }
+                if (move.special?.type === 'castle') {
+                    const { rookFrom, rookTo } = move.special;
+                    newBoard[rookTo[0]][rookTo[1]] = newBoard[rookFrom[0]][rookFrom[1]];
+                    newBoard[rookFrom[0]][rookFrom[1]] = null;
+                }
+                if (move.special?.type === 'promotion') {
+                    newBoard[move.to[0]][move.to[1]] = { type: move.special.promote, color };
+                }
+                return !isInCheck(newBoard, color);
+            });
+        }
+
+        // Apply a move and return new game state
+        function applyMove(state, move) {
+            const newBoard = cloneBoard(state.board);
+            const piece = newBoard[move.from[0]][move.from[1]];
+            const captured = newBoard[move.to[0]][move.to[1]];
+            const color = piece.color;
+
+            newBoard[move.to[0]][move.to[1]] = piece;
+            newBoard[move.from[0]][move.from[1]] = null;
+
+            let newEnPassant = '-';
+            let newCastling = state.castling;
+
+            // Handle special moves
+            if (move.special?.type === 'doublePush') {
+                const epRow = move.from[0] + (color === WHITE ? -1 : 1);
+                const epFile = String.fromCharCode(97 + move.from[1]);
+                newEnPassant = `${epFile}${8 - epRow}`;
+            }
+            if (move.special?.type === 'enPassant') {
+                newBoard[move.from[0]][move.to[1]] = null;
+            }
+            if (move.special?.type === 'castle') {
+                const { rookFrom, rookTo } = move.special;
+                newBoard[rookTo[0]][rookTo[1]] = newBoard[rookFrom[0]][rookFrom[1]];
+                newBoard[rookFrom[0]][rookFrom[1]] = null;
+            }
+            if (move.special?.type === 'promotion') {
+                newBoard[move.to[0]][move.to[1]] = { type: move.special.promote, color };
+            }
+
+            // Update castling rights
+            if (piece.type === 'k') {
+                if (color === WHITE) newCastling = newCastling.replace(/[KQ]/g, '');
+                else newCastling = newCastling.replace(/[kq]/g, '');
+            }
+            if (piece.type === 'r') {
+                if (move.from[0] === 7 && move.from[1] === 7) newCastling = newCastling.replace('K', '');
+                if (move.from[0] === 7 && move.from[1] === 0) newCastling = newCastling.replace('Q', '');
+                if (move.from[0] === 0 && move.from[1] === 7) newCastling = newCastling.replace('k', '');
+                if (move.from[0] === 0 && move.from[1] === 0) newCastling = newCastling.replace('q', '');
+            }
+            // If a rook is captured
+            if (captured?.type === 'r') {
+                if (move.to[0] === 7 && move.to[1] === 7) newCastling = newCastling.replace('K', '');
+                if (move.to[0] === 7 && move.to[1] === 0) newCastling = newCastling.replace('Q', '');
+                if (move.to[0] === 0 && move.to[1] === 7) newCastling = newCastling.replace('k', '');
+                if (move.to[0] === 0 && move.to[1] === 0) newCastling = newCastling.replace('q', '');
+            }
+            if (newCastling === '') newCastling = '-';
+
+            const isCapture = captured || move.special?.type === 'enPassant';
+            const newHalfMoves = (piece.type === 'p' || isCapture) ? 0 : state.halfMoves + 1;
+            const newFullMoves = color === BLACK ? state.fullMoves + 1 : state.fullMoves;
+            const newTurn = color === WHITE ? BLACK : WHITE;
+
+            return {
+                board: newBoard,
+                turn: newTurn,
+                castling: newCastling,
+                enPassant: newEnPassant,
+                halfMoves: newHalfMoves,
+                fullMoves: newFullMoves,
+            };
+        }
+
+        // Get game result
+        function getGameResult(state) {
+            const legalMoves = generateLegalMoves(state, state.turn);
+            if (legalMoves.length === 0) {
+                if (isInCheck(state.board, state.turn)) {
+                    return state.turn === WHITE ? 'Black wins by checkmate!' : 'White wins by checkmate!';
+                }
+                return 'Draw by stalemate!';
+            }
+            if (state.halfMoves >= 100) return 'Draw by 50-move rule!';
+            return null;
+        }
+
+        // Get algebraic notation for a move
+        function moveToAlgebraic(state, move) {
+            const files = 'abcdefgh';
+            const ranks = '87654321';
+            const piece = state.board[move.from[0]][move.from[1]];
+            const isCapture = state.board[move.to[0]][move.to[1]] || move.special?.type === 'enPassant';
+
+            if (move.special?.type === 'castle') {
+                return move.to[1] === 6 ? 'O-O' : 'O-O-O';
+            }
+
+            let notation = '';
+            if (piece.type !== 'p') {
+                notation += piece.type.toUpperCase();
+            } else if (isCapture) {
+                notation += files[move.from[1]];
+            }
+
+            if (isCapture) notation += 'x';
+            notation += files[move.to[1]] + ranks[move.to[0]];
+
+            if (move.special?.type === 'promotion') {
+                notation += '=' + move.special.promote.toUpperCase();
+            }
+
+            // Check if move results in check
+            const newState = applyMove(state, move);
+            if (isInCheck(newState.board, newState.turn)) {
+                const hasLegal = generateLegalMoves(newState, newState.turn).length > 0;
+                notation += hasLegal ? '+' : '#';
+            }
+
+            return notation;
+        }
+
+        // ===== CHESS APP COMPONENT =====
+
+        const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+        const PIECE_SYMBOLS = {
+            'w': { 'k': '♔', 'q': '♕', 'r': '♖', 'b': '♗', 'n': '♘', 'p': '♙' },
+            'b': { 'k': '♚', 'q': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟' }
+        };
+
         const ChessApp = () => {
-          const [currentPuzzle, setCurrentPuzzle] = useState(null);
-          const [board, setBoard] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR');
-          const [gameStatus, setGameStatus] = useState('idle');
-          const [score, setScore] = useState({ solved: 0, attempts: 0, streak: 0 });
-          const [activeTab, setActiveTab] = useState('puzzles');
-          const [playerUsername, setPlayerUsername] = useState('magnus');
-          const [userGames, setUserGames] = useState([]);
-          const [loadingGames, setLoadingGames] = useState(false);
-          const [playerStats, setPlayerStats] = useState(null);
+            const [gameState, setGameState] = useState(() => parseFEN(INITIAL_FEN));
+            const [selectedSquare, setSelectedSquare] = useState(null);
+            const [legalMovesForSelected, setLegalMovesForSelected] = useState([]);
+            const [lastMove, setLastMove] = useState(null);
+            const [moveHistory, setMoveHistory] = useState([]);
+            const [gameResult, setGameResult] = useState(null);
+            const [promotionPending, setPromotionPending] = useState(null);
+            const [capturedPieces, setCapturedPieces] = useState({ w: [], b: [] });
 
-          useEffect(() => {
-            fetchPuzzle();
-          }, []);
+            // Active tab state
+            const [activeTab, setActiveTab] = useState('play');
+            const [currentPuzzle, setCurrentPuzzle] = useState(null);
+            const [puzzleStatus, setPuzzleStatus] = useState('idle');
+            const [playerUsername, setPlayerUsername] = useState('magnus');
+            const [userGames, setUserGames] = useState([]);
+            const [loadingGames, setLoadingGames] = useState(false);
+            const [playerStats, setPlayerStats] = useState(null);
 
-          const fetchPuzzle = async () => {
-            try {
-              setGameStatus('loading');
-              const response = await fetch('https://lichess.org/api/puzzle/daily?_format=json');
-              const data = await response.json();
-              if (data?.puzzle) {
-                setCurrentPuzzle(data.puzzle);
-                setGameStatus('playing');
-              }
-            } catch (err) {
-              setGameStatus('error');
-            }
-          };
+            const fetchPuzzle = async () => {
+                try {
+                    setPuzzleStatus('loading');
+                    const response = await fetch('https://lichess.org/api/puzzle/daily?_format=json');
+                    const data = await response.json();
+                    if (data?.puzzle) {
+                        setCurrentPuzzle(data.puzzle);
+                        setPuzzleStatus('playing');
+                    }
+                } catch (err) {
+                    setPuzzleStatus('error');
+                }
+            };
 
-          const fetchUserGames = async (username) => {
-            try {
-              setLoadingGames(true);
-              const [gamesRes, statsRes] = await Promise.all([
-                fetch(`https://lichess.org/api/games/${username}?max=15`),
-                fetch(`https://lichess.org/api/user/${username}`)
-              ]);
-              const games = await gamesRes.json();
-              const stats = await statsRes.json();
-              setUserGames(games || []);
-              setPlayerStats(stats);
-            } catch (err) {
-              console.error(err);
-            } finally {
-              setLoadingGames(false);
-            }
-          };
+            const fetchUserGames = async (username) => {
+                try {
+                    setLoadingGames(true);
+                    const [gamesRes, statsRes] = await Promise.all([
+                        fetch(`https://lichess.org/api/games/${username}?max=15`),
+                        fetch(`https://lichess.org/api/user/${username}`)
+                    ]);
+                    const games = await gamesRes.json();
+                    const stats = await statsRes.json();
+                    setUserGames(games || []);
+                    setPlayerStats(stats);
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    setLoadingGames(false);
+                }
+            };
 
-          const renderBoard = () => {
-            const pieces = { 'P': '♙', 'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔', 'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛', 'k': '♚' };
-            const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
-            const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+            const resetGame = () => {
+                setGameState(parseFEN(INITIAL_FEN));
+                setSelectedSquare(null);
+                setLegalMovesForSelected([]);
+                setLastMove(null);
+                setMoveHistory([]);
+                setGameResult(null);
+                setPromotionPending(null);
+                setCapturedPieces({ w: [], b: [] });
+            };
 
-            return React.createElement('div', { className: 'inline-block border-8 border-amber-900 shadow-2xl rounded-xl overflow-hidden board-glow' },
-              ranks.map(rank => React.createElement('div', { key: rank, className: 'flex' },
-                files.map(file => React.createElement('div', { 
-                  key: file + rank, 
-                  className: `w-16 h-16 flex items-center justify-center text-4xl font-bold ${(ranks.indexOf(rank) + files.indexOf(file)) % 2 === 0 ? 'bg-amber-100' : 'bg-amber-700'}`
-                }, board && pieces[board[ranks.indexOf(rank) * 8 + files.indexOf(file)]] && pieces[board[ranks.indexOf(rank) * 8 + files.indexOf(file)]]))
-              ))
-            );
-          };
+            const handleSquareClick = useCallback((row, col) => {
+                if (gameResult || promotionPending) return;
 
-          return React.createElement('div', { className: 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-6' },
-            React.createElement('div', { className: 'max-w-7xl mx-auto' },
-              // Header
-              React.createElement('div', { className: 'flex justify-between items-center mb-8' },
-                React.createElement('div', { className: 'flex items-center gap-3' },
-                  React.createElement('div', { className: 'text-4xl float-animate' }, '♛'),
-                  React.createElement('h1', { className: 'text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-200' }, 'ChessGPT Elite')
-                ),
-                React.createElement('button', { onClick: fetchPuzzle, className: 'px-6 py-3 bg-blue-600 text-white rounded-lg hover:shadow-lg font-semibold flex items-center gap-2' }, '🔄 New Puzzle')
-              ),
+                const piece = gameState.board[row][col];
 
-              // Tabs
-              React.createElement('div', { className: 'flex gap-4 mb-6 border-b border-slate-700' },
-                React.createElement('button', { onClick: () => setActiveTab('puzzles'), className: `pb-4 font-semibold ${activeTab === 'puzzles' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-400'}` }, '🧩 Daily Puzzles'),
-                React.createElement('button', { onClick: () => setActiveTab('games'), className: `pb-4 font-semibold ${activeTab === 'games' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-400'}` }, '🎮 Player Games')
-              ),
+                // If a piece is already selected
+                if (selectedSquare) {
+                    // Clicking the same square - deselect
+                    if (selectedSquare[0] === row && selectedSquare[1] === col) {
+                        setSelectedSquare(null);
+                        setLegalMovesForSelected([]);
+                        return;
+                    }
 
-              // Puzzles Tab
-              activeTab === 'puzzles' && React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-3 gap-8' },
-                React.createElement('div', { className: 'lg:col-span-2 bg-slate-900/80 rounded-2xl p-8 border border-slate-700/50' },
-                  gameStatus === 'loading' ? 
-                    React.createElement('div', { className: 'flex items-center justify-center h-96' }, 
-                      React.createElement('div', { className: 'text-center' },
-                        React.createElement('div', { className: 'text-6xl mb-4 animate-pulse' }, '♘'),
-                        React.createElement('p', { className: 'text-slate-400' }, 'Loading puzzle...')
-                      )
-                    ) :
-                    React.createElement('div', { className: 'flex flex-col items-center' },
-                      React.createElement('div', { className: 'mb-6' }, renderBoard()),
-                      currentPuzzle && React.createElement('div', { className: 'w-full mt-6 p-4 bg-slate-800 rounded-lg border border-amber-500/30' },
-                        React.createElement('p', { className: 'text-amber-400 font-semibold' }, `Theme: ${currentPuzzle.theme}`),
-                        React.createElement('p', { className: 'text-slate-300 text-sm mt-2' }, `Rating: ${currentPuzzle.rating}`)
-                      )
+                    // Try to make a move
+                    const matchingMoves = legalMovesForSelected.filter(
+                        m => m.to[0] === row && m.to[1] === col
+                    );
+
+                    if (matchingMoves.length > 0) {
+                        // Check for promotion choice needed
+                        if (matchingMoves.length > 1 && matchingMoves[0].special?.type === 'promotion') {
+                            setPromotionPending({ moves: matchingMoves, row, col });
+                            return;
+                        }
+                        executeMove(matchingMoves[0]);
+                        return;
+                    }
+
+                    // Clicking on own piece - re-select
+                    if (piece && piece.color === gameState.turn) {
+                        selectPiece(row, col);
+                        return;
+                    }
+
+                    // Invalid click - deselect
+                    setSelectedSquare(null);
+                    setLegalMovesForSelected([]);
+                    return;
+                }
+
+                // No piece selected - select one
+                if (piece && piece.color === gameState.turn) {
+                    selectPiece(row, col);
+                }
+            }, [gameState, selectedSquare, legalMovesForSelected, gameResult, promotionPending]);
+
+            const selectPiece = (row, col) => {
+                setSelectedSquare([row, col]);
+                const allLegal = generateLegalMoves(gameState, gameState.turn);
+                const pieceMoves = allLegal.filter(m => m.from[0] === row && m.from[1] === col);
+                setLegalMovesForSelected(pieceMoves);
+            };
+
+            const executeMove = (move) => {
+                const notation = moveToAlgebraic(gameState, move);
+                const captured = gameState.board[move.to[0]][move.to[1]];
+
+                // Track captured pieces
+                if (captured || move.special?.type === 'enPassant') {
+                    const capturedPiece = captured || gameState.board[move.from[0]][move.to[1]];
+                    if (capturedPiece) {
+                        setCapturedPieces(prev => ({
+                            ...prev,
+                            [capturedPiece.color]: [...prev[capturedPiece.color], capturedPiece.type]
+                        }));
+                    }
+                }
+
+                const newState = applyMove(gameState, move);
+                setGameState(newState);
+                setSelectedSquare(null);
+                setLegalMovesForSelected([]);
+                setLastMove({ from: move.from, to: move.to });
+                setMoveHistory(prev => [...prev, notation]);
+                setPromotionPending(null);
+
+                // Check game result
+                const result = getGameResult(newState);
+                if (result) setGameResult(result);
+            };
+
+            const handlePromotion = (promoPiece) => {
+                if (!promotionPending) return;
+                const move = promotionPending.moves.find(m => m.special.promote === promoPiece);
+                if (move) executeMove(move);
+            };
+
+            const isLegalTarget = (row, col) => {
+                return legalMovesForSelected.some(m => m.to[0] === row && m.to[1] === col);
+            };
+
+            const inCheck = isInCheck(gameState.board, gameState.turn);
+            const kingPos = findKing(gameState.board, gameState.turn);
+
+            // Render board
+            const renderBoard = () => {
+                const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+
+                return React.createElement('div', { className: 'inline-block border-8 border-amber-900 shadow-2xl rounded-xl overflow-hidden board-glow' },
+                    // Board squares
+                    Array.from({ length: 8 }, (_, r) =>
+                        React.createElement('div', { key: r, className: 'flex' },
+                            Array.from({ length: 8 }, (_, c) => {
+                                const piece = gameState.board[r][c];
+                                const isLight = (r + c) % 2 === 0;
+                                const isSelected = selectedSquare && selectedSquare[0] === r && selectedSquare[1] === c;
+                                const isLegal = isLegalTarget(r, c);
+                                const isCaptureTo = isLegal && piece;
+                                const isLastMove = lastMove && ((lastMove.from[0] === r && lastMove.from[1] === c) || (lastMove.to[0] === r && lastMove.to[1] === c));
+                                const isKingInCheck = inCheck && kingPos && kingPos[0] === r && kingPos[1] === c;
+
+                                let bgClass = isLight ? 'bg-amber-100' : 'bg-amber-700';
+                                if (isLastMove) bgClass = isLight ? 'square-lastmove-light' : 'square-lastmove-dark';
+
+                                let extraClass = '';
+                                if (isSelected) extraClass += ' square-selected';
+                                if (isLegal && !piece) extraClass += ' square-legal';
+                                if (isCaptureTo) extraClass += ' square-capture';
+                                if (isKingInCheck) extraClass += ' square-check';
+
+                                return React.createElement('div', {
+                                    key: `${r}-${c}`,
+                                    className: `w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-3xl sm:text-4xl font-bold cursor-pointer select-none relative ${bgClass}${extraClass}`,
+                                    onClick: () => handleSquareClick(r, c),
+                                },
+                                    piece && React.createElement('span', {
+                                        className: `drop-shadow-md ${piece.color === WHITE ? 'text-white' : 'text-gray-900'}`,
+                                        style: { textShadow: piece.color === WHITE ? '0 1px 3px rgba(0,0,0,0.7)' : '0 1px 2px rgba(255,255,255,0.3)' }
+                                    }, PIECE_SYMBOLS[piece.color][piece.type]),
+                                    // File label on bottom row
+                                    r === 7 && React.createElement('span', { className: `absolute bottom-0.5 right-1 text-xs font-semibold ${isLight ? 'text-amber-700' : 'text-amber-100'}` }, files[c]),
+                                    // Rank label on first column
+                                    c === 0 && React.createElement('span', { className: `absolute top-0.5 left-1 text-xs font-semibold ${isLight ? 'text-amber-700' : 'text-amber-100'}` }, 8 - r)
+                                );
+                            })
+                        )
                     )
-                ),
-                React.createElement('div', { className: 'space-y-6' },
-                  React.createElement('div', { className: 'bg-slate-800 rounded-2xl p-6 border border-slate-700/50' },
-                    React.createElement('h2', { className: 'text-xl font-bold text-amber-400 mb-6' }, '📊 Performance'),
-                    React.createElement('div', { className: 'space-y-4' },
-                      React.createElement('div', { className: 'flex justify-between p-3 bg-slate-700/50 rounded-lg' },
-                        React.createElement('span', { className: 'text-slate-400' }, 'Solved'),
-                        React.createElement('span', { className: 'text-2xl font-bold text-green-400' }, score.solved)
-                      ),
-                      React.createElement('div', { className: 'flex justify-between p-3 bg-slate-700/50 rounded-lg' },
-                        React.createElement('span', { className: 'text-slate-400' }, 'Streak 🔥'),
-                        React.createElement('span', { className: 'text-2xl font-bold text-amber-400' }, score.streak)
-                      ),
-                      React.createElement('div', { className: 'flex justify-between p-3 bg-slate-700/50 rounded-lg' },
-                        React.createElement('span', { className: 'text-slate-400' }, 'Accuracy'),
-                        React.createElement('span', { className: 'text-2xl font-bold text-purple-400' }, `${score.attempts > 0 ? Math.round((score.solved / score.attempts) * 100) : 0}%`)
-                      )
+                );
+            };
+
+            // Promotion dialog
+            const renderPromotionDialog = () => {
+                if (!promotionPending) return null;
+                const color = gameState.turn;
+                const pieces = ['q', 'r', 'b', 'n'];
+                return React.createElement('div', { className: 'fixed inset-0 bg-black/60 flex items-center justify-center z-50' },
+                    React.createElement('div', { className: 'bg-slate-800 rounded-2xl p-6 border border-amber-500/50' },
+                        React.createElement('p', { className: 'text-amber-400 text-lg font-semibold mb-4 text-center' }, 'Promote Pawn To:'),
+                        React.createElement('div', { className: 'flex gap-3' },
+                            pieces.map(p => React.createElement('button', {
+                                key: p,
+                                onClick: () => handlePromotion(p),
+                                className: 'w-16 h-16 text-4xl bg-slate-700 hover:bg-slate-600 rounded-xl flex items-center justify-center border border-slate-500 transition-colors'
+                            }, PIECE_SYMBOLS[color][p]))
+                        )
                     )
-                  )
-                )
-              ),
+                );
+            };
 
-              // Games Tab
-              activeTab === 'games' && React.createElement('div', null,
-                React.createElement('div', { className: 'mb-8 bg-slate-900/80 rounded-2xl p-8 border border-slate-700/50' },
-                  React.createElement('h2', { className: 'text-2xl font-bold text-amber-400 mb-6' }, '👤 Player Analysis'),
-                  React.createElement('div', { className: 'flex gap-3 flex-wrap mb-6' },
-                    React.createElement('input', { type: 'text', value: playerUsername, onChange: (e) => setPlayerUsername(e.target.value), placeholder: 'Enter username', className: 'flex-1 min-w-64 px-4 py-3 bg-slate-800 text-white rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none' }),
-                    React.createElement('button', { onClick: () => fetchUserGames(playerUsername), className: 'px-6 py-3 bg-blue-600 text-white rounded-lg hover:shadow-lg font-semibold', disabled: loadingGames }, loadingGames ? 'Loading...' : 'Search')
-                  ),
-                  React.createElement('div', { className: 'flex gap-2 flex-wrap' },
-                    ['magnus', 'hikaru', 'fabiano', 'alireza2003', 'penguingim1'].map(p => React.createElement('button', { key: p, onClick: () => { setPlayerUsername(p); setTimeout(() => fetchUserGames(p), 100); }, className: 'px-3 py-1 text-sm bg-slate-800 text-amber-400 rounded hover:bg-slate-700' }, p))
-                  )
-                ),
+            // Captured pieces display
+            const renderCaptured = (color) => {
+                const pieceOrder = { q: 1, r: 2, b: 3, n: 4, p: 5 };
+                const sorted = [...capturedPieces[color]].sort((a, b) => pieceOrder[a] - pieceOrder[b]);
+                return React.createElement('div', { className: 'flex flex-wrap gap-0.5 min-h-[24px]' },
+                    sorted.map((p, i) => React.createElement('span', { key: i, className: 'text-lg' }, PIECE_SYMBOLS[color][p]))
+                );
+            };
 
-                playerStats && React.createElement('div', { className: 'mb-8 grid grid-cols-1 md:grid-cols-4 gap-4' },
-                  React.createElement('div', { className: 'bg-blue-900 rounded-2xl p-6' },
-                    React.createElement('p', { className: 'text-blue-300 text-sm font-semibold mb-2' }, 'Player'),
-                    React.createElement('p', { className: 'text-2xl font-bold text-blue-100' }, playerStats.username)
-                  ),
-                  React.createElement('div', { className: 'bg-purple-900 rounded-2xl p-6' },
-                    React.createElement('p', { className: 'text-purple-300 text-sm font-semibold mb-2' }, 'Blitz'),
-                    React.createElement('p', { className: 'text-2xl font-bold text-purple-100' }, playerStats.perfs?.blitz?.rating || 'N/A')
-                  ),
-                  React.createElement('div', { className: 'bg-pink-900 rounded-2xl p-6' },
-                    React.createElement('p', { className: 'text-pink-300 text-sm font-semibold mb-2' }, 'Rapid'),
-                    React.createElement('p', { className: 'text-2xl font-bold text-pink-100' }, playerStats.perfs?.rapid?.rating || 'N/A')
-                  ),
-                  React.createElement('div', { className: 'bg-green-900 rounded-2xl p-6' },
-                    React.createElement('p', { className: 'text-green-300 text-sm font-semibold mb-2' }, 'Classical'),
-                    React.createElement('p', { className: 'text-2xl font-bold text-green-100' }, playerStats.perfs?.classical?.rating || 'N/A')
-                  )
-                ),
+            // Move history
+            const renderMoveHistory = () => {
+                const pairs = [];
+                for (let i = 0; i < moveHistory.length; i += 2) {
+                    pairs.push({
+                        num: Math.floor(i / 2) + 1,
+                        white: moveHistory[i],
+                        black: moveHistory[i + 1] || ''
+                    });
+                }
+                return React.createElement('div', { className: 'max-h-64 overflow-y-auto space-y-1 text-sm font-mono' },
+                    pairs.length === 0
+                        ? React.createElement('p', { className: 'text-slate-500 text-center italic' }, 'Make a move to start...')
+                        : pairs.map(p => React.createElement('div', { key: p.num, className: 'flex gap-2 text-slate-300' },
+                            React.createElement('span', { className: 'text-slate-500 w-8' }, `${p.num}.`),
+                            React.createElement('span', { className: 'w-16' }, p.white),
+                            React.createElement('span', { className: 'w-16' }, p.black)
+                        ))
+                );
+            };
 
-                userGames.length > 0 && React.createElement('div', { className: 'space-y-4' },
-                  userGames.slice(0, 10).map((game, idx) => React.createElement('div', { key: game.id, className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
-                    React.createElement('div', { className: 'flex justify-between items-start' },
-                      React.createElement('div', null,
-                        React.createElement('p', { className: 'font-semibold text-white mb-2' }, `Game #${idx + 1}`),
-                        React.createElement('p', { className: 'text-slate-300' }, `${game.players.white.name} vs ${game.players.black.name}`)
-                      ),
-                      React.createElement('span', { className: `px-4 py-2 rounded font-bold ${game.winner === 'white' ? 'bg-amber-900/40 text-amber-300' : game.winner === 'black' ? 'bg-blue-900/40 text-blue-300' : 'bg-gray-700/40'}` }, game.winner?.toUpperCase() || 'DRAW')
+            // Game info panel
+            const renderGameInfo = () => {
+                return React.createElement('div', { className: 'space-y-4' },
+                    // Turn indicator
+                    React.createElement('div', { className: 'bg-slate-800 rounded-xl p-4 border border-slate-700/50' },
+                        React.createElement('div', { className: 'flex items-center justify-between' },
+                            React.createElement('span', { className: 'text-slate-400 font-semibold' }, 'Turn'),
+                            React.createElement('div', { className: 'flex items-center gap-2' },
+                                React.createElement('div', { className: `w-4 h-4 rounded-full border ${gameState.turn === WHITE ? 'bg-white border-gray-300' : 'bg-gray-900 border-gray-600'}` }),
+                                React.createElement('span', { className: 'text-lg font-bold text-white' }, gameState.turn === WHITE ? 'White' : 'Black')
+                            )
+                        ),
+                        inCheck && !gameResult && React.createElement('div', { className: 'mt-2 text-red-400 font-semibold text-center animate-pulse' }, '⚠ CHECK!')
                     ),
-                    React.createElement('p', { className: 'text-slate-400 text-sm mt-3' }, `⚡ ${game.speed} • 📖 ${game.opening?.name || 'Unknown'}`)
-                  ))
-                )
-              )
-            )
-          );
+
+                    // Game result
+                    gameResult && React.createElement('div', { className: 'bg-gradient-to-r from-amber-900/50 to-amber-800/50 rounded-xl p-4 border border-amber-500/50 text-center' },
+                        React.createElement('p', { className: 'text-amber-300 text-xl font-bold' }, '🏆 Game Over'),
+                        React.createElement('p', { className: 'text-amber-100 mt-1' }, gameResult)
+                    ),
+
+                    // Captured pieces
+                    React.createElement('div', { className: 'bg-slate-800 rounded-xl p-4 border border-slate-700/50' },
+                        React.createElement('h3', { className: 'text-amber-400 font-semibold mb-2' }, 'Captured'),
+                        React.createElement('div', { className: 'space-y-2' },
+                            React.createElement('div', null,
+                                React.createElement('span', { className: 'text-xs text-slate-500' }, 'By White: '),
+                                renderCaptured('b')
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('span', { className: 'text-xs text-slate-500' }, 'By Black: '),
+                                renderCaptured('w')
+                            )
+                        )
+                    ),
+
+                    // Move history
+                    React.createElement('div', { className: 'bg-slate-800 rounded-xl p-4 border border-slate-700/50' },
+                        React.createElement('h3', { className: 'text-amber-400 font-semibold mb-3' }, 'Moves'),
+                        renderMoveHistory()
+                    ),
+
+                    // Controls
+                    React.createElement('button', {
+                        onClick: resetGame,
+                        className: 'w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors'
+                    }, '🔄 New Game')
+                );
+            };
+
+            return React.createElement('div', { className: 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-4 sm:p-6' },
+                React.createElement('div', { className: 'max-w-7xl mx-auto' },
+                    // Header
+                    React.createElement('div', { className: 'flex justify-between items-center mb-6' },
+                        React.createElement('div', { className: 'flex items-center gap-3' },
+                            React.createElement('div', { className: 'text-4xl float-animate' }, '♛'),
+                            React.createElement('h1', { className: 'text-3xl sm:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-200' }, 'ChessGPT Elite')
+                        )
+                    ),
+
+                    // Tabs
+                    React.createElement('div', { className: 'flex gap-4 mb-6 border-b border-slate-700' },
+                        React.createElement('button', { onClick: () => setActiveTab('play'), className: `pb-3 font-semibold transition-colors ${activeTab === 'play' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-400 hover:text-slate-300'}` }, '♟ Play Chess'),
+                        React.createElement('button', { onClick: () => { setActiveTab('puzzles'); if (!currentPuzzle) fetchPuzzle(); }, className: `pb-3 font-semibold transition-colors ${activeTab === 'puzzles' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-400 hover:text-slate-300'}` }, '🧩 Daily Puzzles'),
+                        React.createElement('button', { onClick: () => setActiveTab('games'), className: `pb-3 font-semibold transition-colors ${activeTab === 'games' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-400 hover:text-slate-300'}` }, '🎮 Player Games')
+                    ),
+
+                    // Play Tab
+                    activeTab === 'play' && React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-3 gap-6' },
+                        React.createElement('div', { className: 'lg:col-span-2 bg-slate-900/80 rounded-2xl p-4 sm:p-8 border border-slate-700/50' },
+                            React.createElement('div', { className: 'flex flex-col items-center' },
+                                // Black player label
+                                React.createElement('div', { className: 'w-full flex items-center justify-between mb-3 px-2' },
+                                    React.createElement('div', { className: 'flex items-center gap-2' },
+                                        React.createElement('div', { className: 'w-3 h-3 rounded-full bg-gray-900 border border-gray-600' }),
+                                        React.createElement('span', { className: `font-semibold ${gameState.turn === BLACK && !gameResult ? 'text-amber-400' : 'text-slate-400'}` }, 'Black')
+                                    ),
+                                    renderCaptured('w')
+                                ),
+                                // Board
+                                renderBoard(),
+                                // White player label
+                                React.createElement('div', { className: 'w-full flex items-center justify-between mt-3 px-2' },
+                                    React.createElement('div', { className: 'flex items-center gap-2' },
+                                        React.createElement('div', { className: 'w-3 h-3 rounded-full bg-white border border-gray-300' }),
+                                        React.createElement('span', { className: `font-semibold ${gameState.turn === WHITE && !gameResult ? 'text-amber-400' : 'text-slate-400'}` }, 'White')
+                                    ),
+                                    renderCaptured('b')
+                                )
+                            )
+                        ),
+                        React.createElement('div', null, renderGameInfo())
+                    ),
+
+                    // Puzzles Tab
+                    activeTab === 'puzzles' && React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-3 gap-8' },
+                        React.createElement('div', { className: 'lg:col-span-2 bg-slate-900/80 rounded-2xl p-8 border border-slate-700/50' },
+                            puzzleStatus === 'loading' ?
+                                React.createElement('div', { className: 'flex items-center justify-center h-96' },
+                                    React.createElement('div', { className: 'text-center' },
+                                        React.createElement('div', { className: 'text-6xl mb-4 animate-pulse' }, '♘'),
+                                        React.createElement('p', { className: 'text-slate-400' }, 'Loading puzzle...')
+                                    )
+                                ) :
+                                React.createElement('div', { className: 'flex flex-col items-center' },
+                                    React.createElement('div', { className: 'mb-6' }, renderBoard()),
+                                    currentPuzzle && React.createElement('div', { className: 'w-full mt-6 p-4 bg-slate-800 rounded-lg border border-amber-500/30' },
+                                        React.createElement('p', { className: 'text-amber-400 font-semibold' }, `Theme: ${currentPuzzle.theme}`),
+                                        React.createElement('p', { className: 'text-slate-300 text-sm mt-2' }, `Rating: ${currentPuzzle.rating}`)
+                                    )
+                                )
+                        ),
+                        React.createElement('div', { className: 'space-y-6' },
+                            React.createElement('button', { onClick: fetchPuzzle, className: 'w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:shadow-lg font-semibold' }, '🔄 New Puzzle')
+                        )
+                    ),
+
+                    // Games Tab
+                    activeTab === 'games' && React.createElement('div', null,
+                        React.createElement('div', { className: 'mb-8 bg-slate-900/80 rounded-2xl p-8 border border-slate-700/50' },
+                            React.createElement('h2', { className: 'text-2xl font-bold text-amber-400 mb-6' }, '👤 Player Analysis'),
+                            React.createElement('div', { className: 'flex gap-3 flex-wrap mb-6' },
+                                React.createElement('input', { type: 'text', value: playerUsername, onChange: (e) => setPlayerUsername(e.target.value), placeholder: 'Enter username', className: 'flex-1 min-w-64 px-4 py-3 bg-slate-800 text-white rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none' }),
+                                React.createElement('button', { onClick: () => fetchUserGames(playerUsername), className: 'px-6 py-3 bg-blue-600 text-white rounded-lg hover:shadow-lg font-semibold', disabled: loadingGames }, loadingGames ? 'Loading...' : 'Search')
+                            ),
+                            React.createElement('div', { className: 'flex gap-2 flex-wrap' },
+                                ['magnus', 'hikaru', 'fabiano', 'alireza2003', 'penguingim1'].map(p => React.createElement('button', { key: p, onClick: () => { setPlayerUsername(p); setTimeout(() => fetchUserGames(p), 100); }, className: 'px-3 py-1 text-sm bg-slate-800 text-amber-400 rounded hover:bg-slate-700' }, p))
+                            )
+                        ),
+
+                        playerStats && React.createElement('div', { className: 'mb-8 grid grid-cols-1 md:grid-cols-4 gap-4' },
+                            React.createElement('div', { className: 'bg-blue-900 rounded-2xl p-6' },
+                                React.createElement('p', { className: 'text-blue-300 text-sm font-semibold mb-2' }, 'Player'),
+                                React.createElement('p', { className: 'text-2xl font-bold text-blue-100' }, playerStats.username)
+                            ),
+                            React.createElement('div', { className: 'bg-purple-900 rounded-2xl p-6' },
+                                React.createElement('p', { className: 'text-purple-300 text-sm font-semibold mb-2' }, 'Blitz'),
+                                React.createElement('p', { className: 'text-2xl font-bold text-purple-100' }, playerStats.perfs?.blitz?.rating || 'N/A')
+                            ),
+                            React.createElement('div', { className: 'bg-pink-900 rounded-2xl p-6' },
+                                React.createElement('p', { className: 'text-pink-300 text-sm font-semibold mb-2' }, 'Rapid'),
+                                React.createElement('p', { className: 'text-2xl font-bold text-pink-100' }, playerStats.perfs?.rapid?.rating || 'N/A')
+                            ),
+                            React.createElement('div', { className: 'bg-green-900 rounded-2xl p-6' },
+                                React.createElement('p', { className: 'text-green-300 text-sm font-semibold mb-2' }, 'Classical'),
+                                React.createElement('p', { className: 'text-2xl font-bold text-green-100' }, playerStats.perfs?.classical?.rating || 'N/A')
+                            )
+                        ),
+
+                        userGames.length > 0 && React.createElement('div', { className: 'space-y-4' },
+                            userGames.slice(0, 10).map((game, idx) => React.createElement('div', { key: game.id, className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
+                                React.createElement('div', { className: 'flex justify-between items-start' },
+                                    React.createElement('div', null,
+                                        React.createElement('p', { className: 'font-semibold text-white mb-2' }, `Game #${idx + 1}`),
+                                        React.createElement('p', { className: 'text-slate-300' }, `${game.players.white.name} vs ${game.players.black.name}`)
+                                    ),
+                                    React.createElement('span', { className: `px-4 py-2 rounded font-bold ${game.winner === 'white' ? 'bg-amber-900/40 text-amber-300' : game.winner === 'black' ? 'bg-blue-900/40 text-blue-300' : 'bg-gray-700/40'}` }, game.winner?.toUpperCase() || 'DRAW')
+                                ),
+                                React.createElement('p', { className: 'text-slate-400 text-sm mt-3' }, `⚡ ${game.speed} • 📖 ${game.opening?.name || 'Unknown'}`)
+                            ))
+                        )
+                    )
+                ),
+                // Promotion dialog
+                renderPromotionDialog()
+            );
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
