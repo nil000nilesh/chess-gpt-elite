@@ -549,12 +549,229 @@ const ChessApp = ({ user }) => {
     const [playerStats,         setPlayerStats]         = useState(null);
     const [boardTheme,          setBoardTheme]          = useState(BOARD_THEMES[0]);
     const [pieceStyle,          setPieceStyle]          = useState('classic3d');
+    const [lichessToken,        setLichessToken]        = useState('');
+    const [myAccount,           setMyAccount]           = useState(null);
+    // Lichess tab state
+    const [lichessTab,          setLichessTab]          = useState('account');
+    const [challenges,          setChallenges]          = useState({in:[],out:[]});
+    const [challengeTarget,     setChallengeTarget]     = useState('');
+    const [challengeTime,       setChallengeTime]       = useState(5);
+    const [challengeInc,        setChallengeInc]        = useState(3);
+    const [challengeColor,      setChallengeColor]      = useState('random');
+    const [challengeVariant,    setChallengeVariant]    = useState('standard');
+    const [tournaments,         setTournaments]         = useState([]);
+    const [puzzleActivity,      setPuzzleActivity]      = useState([]);
+    const [boardGames,          setBoardGames]          = useState([]);
+    const [activeGameId,        setActiveGameId]        = useState(null);
+    const [gameEvents,          setGameEvents]          = useState([]);
+    const [moveInput,           setMoveInput]           = useState('');
+    const [lichessLoading,      setLichessLoading]      = useState({});
+    const [lichessMsg,          setLichessMsg]          = useState('');
+    const eventSourceRef = useRef(null);
 
-    const fetchPuzzle = async () => {
-        try { setPuzzleStatus('loading'); const r=await fetch('https://lichess.org/api/puzzle/daily?_format=json'); const d=await r.json(); if(d?.puzzle){setCurrentPuzzle(d.puzzle);setPuzzleStatus('playing');} } catch { setPuzzleStatus('error'); }
+    // ── Firestore se Lichess token load karo ──
+    useEffect(()=>{
+        if (!user?.uid) return;
+        db.collection('users').doc(user.uid).collection('settings').doc('apiKeys').get()
+            .then(doc=>{ if(doc.exists){ const t=doc.data().lichessToken||''; setLichessToken(t); if(t) fetchMyAccount(t); } })
+            .catch(()=>{});
+    },[user?.uid]);
+
+    // ── Base API helper ──
+    const lichessAPI = async (path, options={}, token=lichessToken) => {
+        const headers = { 'Authorization': `Bearer ${token}`, ...(options.headers||{}) };
+        const res = await fetch(`https://lichess.org${path}`, { ...options, headers });
+        return res;
     };
+
+    // ── NDJSON parser ──
+    const parseNDJSON = (text) => text.trim().split('\n').filter(Boolean).map(l=>{ try{return JSON.parse(l);}catch{return null;} }).filter(Boolean);
+
+    const setLoading = (key, val) => setLichessLoading(p=>({...p,[key]:val}));
+    const showMsg = (msg, ms=3000) => { setLichessMsg(msg); setTimeout(()=>setLichessMsg(''),ms); };
+
+    // ── My Account ──
+    const fetchMyAccount = async (token=lichessToken) => {
+        if (!token) return;
+        try {
+            const r = await lichessAPI('/api/account',{},token);
+            if (r.ok) setMyAccount(await r.json());
+        } catch(e){ console.error('account',e); }
+    };
+
+    // ── Daily Puzzle ──
+    const fetchPuzzle = async () => {
+        try {
+            setPuzzleStatus('loading');
+            const headers = lichessToken ? {'Authorization':`Bearer ${lichessToken}`} : {};
+            const r = await fetch('https://lichess.org/api/puzzle/daily', {headers});
+            if (!r.ok) throw new Error('Puzzle fetch failed: '+r.status);
+            const d = await r.json();
+            if (d?.puzzle) { setCurrentPuzzle(d.puzzle); setPuzzleStatus('playing'); }
+            else throw new Error('No puzzle data');
+        } catch(e) { console.error(e); setPuzzleStatus('error'); }
+    };
+
+    // ── Puzzle Activity ──
+    const fetchPuzzleActivity = async () => {
+        if (!lichessToken) { showMsg('⚠ Settings mein Lichess Token save karo pehle'); return; }
+        setLoading('puzzleActivity', true);
+        try {
+            const r = await lichessAPI('/api/puzzle/activity?max=20');
+            if (!r.ok) throw new Error(r.status);
+            const text = await r.text();
+            setPuzzleActivity(parseNDJSON(text));
+        } catch(e){ showMsg('Puzzle activity load failed: '+e.message); }
+        setLoading('puzzleActivity', false);
+    };
+
+    // ── User Games (NDJSON fixed) ──
     const fetchUserGames = async (username) => {
-        try { setLoadingGames(true); const [g,s]=await Promise.all([fetch(`https://lichess.org/api/games/${username}?max=15`),fetch(`https://lichess.org/api/user/${username}`)]);setUserGames(await g.json()||[]);setPlayerStats(await s.json()); } catch(e){console.error(e);} finally{setLoadingGames(false);}
+        try {
+            setLoadingGames(true);
+            const headers = lichessToken ? {'Authorization':`Bearer ${lichessToken}`, 'Accept':'application/x-ndjson'} : {'Accept':'application/x-ndjson'};
+            const [gRes, sRes] = await Promise.all([
+                fetch(`https://lichess.org/api/games/user/${username}?max=15&opening=true`, {headers}),
+                fetch(`https://lichess.org/api/user/${username}`)
+            ]);
+            if (!gRes.ok) throw new Error('Games: '+gRes.status);
+            const gText = await gRes.text();
+            const games = parseNDJSON(gText);
+            setUserGames(games);
+            if (sRes.ok) setPlayerStats(await sRes.json());
+        } catch(e){ console.error('fetchUserGames',e); showMsg('Games load failed: '+e.message); }
+        finally { setLoadingGames(false); }
+    };
+
+    // ── Challenges ──
+    const fetchChallenges = async () => {
+        if (!lichessToken) { showMsg('⚠ Lichess Token required'); return; }
+        setLoading('challenges', true);
+        try {
+            const r = await lichessAPI('/api/challenge');
+            if (!r.ok) throw new Error(r.status);
+            const d = await r.json();
+            setChallenges({ in: d.in||[], out: d.out||[] });
+        } catch(e){ showMsg('Challenges load failed: '+e.message); }
+        setLoading('challenges', false);
+    };
+
+    const sendChallenge = async () => {
+        if (!lichessToken) { showMsg('⚠ Lichess Token required'); return; }
+        if (!challengeTarget.trim()) { showMsg('⚠ Username daalo'); return; }
+        setLoading('sendChallenge', true);
+        try {
+            const body = new URLSearchParams({ clock_limit: challengeTime*60, clock_increment: challengeInc, color: challengeColor, variant: challengeVariant });
+            const r = await lichessAPI(`/api/challenge/${challengeTarget.trim()}`, { method:'POST', body, headers:{'Content-Type':'application/x-www-form-urlencoded'} });
+            const d = await r.json();
+            if (r.ok && d.challenge) { showMsg('✅ Challenge sent to '+challengeTarget); fetchChallenges(); }
+            else showMsg('❌ '+(d.error||'Challenge failed'));
+        } catch(e){ showMsg('Error: '+e.message); }
+        setLoading('sendChallenge', false);
+    };
+
+    const acceptChallenge = async (id) => {
+        setLoading('ch_'+id, true);
+        try {
+            const r = await lichessAPI(`/api/challenge/${id}/accept`, {method:'POST'});
+            if (r.ok) { showMsg('✅ Challenge accepted'); fetchChallenges(); }
+            else showMsg('❌ Accept failed');
+        } catch(e){ showMsg(e.message); }
+        setLoading('ch_'+id, false);
+    };
+
+    const declineChallenge = async (id) => {
+        setLoading('dc_'+id, true);
+        try {
+            const r = await lichessAPI(`/api/challenge/${id}/decline`, {method:'POST'});
+            if (r.ok) { showMsg('✅ Challenge declined'); fetchChallenges(); }
+            else showMsg('❌ Decline failed');
+        } catch(e){ showMsg(e.message); }
+        setLoading('dc_'+id, false);
+    };
+
+    const cancelChallenge = async (id) => {
+        setLoading('cc_'+id, true);
+        try {
+            const r = await lichessAPI(`/api/challenge/${id}/cancel`, {method:'POST'});
+            if (r.ok) { showMsg('Challenge cancelled'); fetchChallenges(); }
+        } catch(e){}
+        setLoading('cc_'+id, false);
+    };
+
+    // ── Board API ──
+    const fetchBoardGames = async () => {
+        if (!lichessToken) { showMsg('⚠ Lichess Token required'); return; }
+        setLoading('boardGames', true);
+        try {
+            const r = await lichessAPI('/api/account/playing');
+            if (!r.ok) throw new Error(r.status);
+            const d = await r.json();
+            setBoardGames(d.nowPlaying||[]);
+        } catch(e){ showMsg('Board games load failed: '+e.message); }
+        setLoading('boardGames', false);
+    };
+
+    const streamBoardGame = (gameId) => {
+        if (eventSourceRef.current) eventSourceRef.current.close();
+        setActiveGameId(gameId); setGameEvents([]);
+        const es = new EventSource(`https://lichess.org/api/board/game/stream/${gameId}`, { withCredentials:false });
+        es.onmessage = (e) => { if(e.data) try{ const d=JSON.parse(e.data); setGameEvents(prev=>[d,...prev.slice(0,29)]); }catch{} };
+        es.onerror   = () => es.close();
+        eventSourceRef.current = es;
+        showMsg('🎮 Streaming game: '+gameId);
+    };
+
+    const boardMove = async (gameId, move) => {
+        if (!move.trim()) return;
+        try {
+            const r = await lichessAPI(`/api/board/game/${gameId}/move/${move.trim()}`, {method:'POST'});
+            if (r.ok) { setMoveInput(''); showMsg('✅ Move played: '+move); }
+            else { const d=await r.json(); showMsg('❌ '+(d.error||'Move failed')); }
+        } catch(e){ showMsg(e.message); }
+    };
+
+    const abortGame = async (gameId) => {
+        try { const r=await lichessAPI(`/api/board/game/${gameId}/abort`,{method:'POST'}); if(r.ok) showMsg('Game aborted'); } catch{}
+    };
+
+    const resignGame = async (gameId) => {
+        try { const r=await lichessAPI(`/api/board/game/${gameId}/resign`,{method:'POST'}); if(r.ok) showMsg('Resigned'); } catch{}
+    };
+
+    // ── Tournaments ──
+    const fetchTournaments = async () => {
+        setLoading('tournaments', true);
+        try {
+            const r = await fetch('https://lichess.org/api/tournament');
+            if (!r.ok) throw new Error(r.status);
+            const d = await r.json();
+            setTournaments([...(d.created||[]),...(d.started||[])].slice(0,15));
+        } catch(e){ showMsg('Tournaments load failed: '+e.message); }
+        setLoading('tournaments', false);
+    };
+
+    const joinTournament = async (id) => {
+        if (!lichessToken) { showMsg('⚠ Lichess Token required'); return; }
+        setLoading('tj_'+id, true);
+        try {
+            const r = await lichessAPI(`/api/tournament/${id}/join`, {method:'POST'});
+            if (r.ok) showMsg('✅ Tournament joined!');
+            else { const d=await r.json(); showMsg('❌ '+(d.error||'Join failed')); }
+        } catch(e){ showMsg(e.message); }
+        setLoading('tj_'+id, false);
+    };
+
+    const createPuzzleRace = async () => {
+        if (!lichessToken) { showMsg('⚠ Lichess Token required'); return; }
+        setLoading('puzzleRace', true);
+        try {
+            const r = await lichessAPI('/api/racer', {method:'POST'});
+            if (!r.ok) throw new Error(r.status);
+            const d = await r.json();
+            if (d.id) { showMsg('🏁 Race created! ID: '+d.id); window.open(`https://lichess.org/racer/${d.id}`,'_blank'); }
+        } catch(e){ showMsg('Puzzle Race create failed: '+e.message); }
+        setLoading('puzzleRace', false);
     };
     const resetGame = () => { setGameState(parseFEN(INITIAL_FEN));setSelectedSquare(null);setLegalMovesForSelected([]);setLastMove(null);setMoveHistory([]);setGameResult(null);setPromotionPending(null);setCapturedPieces({w:[],b:[]}); };
 
@@ -647,6 +864,7 @@ const ChessApp = ({ user }) => {
         {id:'play',   label:'♟ Play'},
         {id:'puzzles',label:'🧩 Puzzles'},
         {id:'games',  label:'🎮 Games'},
+        {id:'lichess',label:'♞ Lichess'},
         {id:'settings',label:'⚙️ Settings'},
     ];
 
@@ -672,8 +890,11 @@ const ChessApp = ({ user }) => {
                 {/* Tabs */}
                 <div className="flex gap-1 mb-6 border-b border-slate-800">
                     {TABS.map(t=>(
-                        <button key={t.id} onClick={()=>{setActiveTab(t.id);if(t.id==='puzzles'&&!currentPuzzle)fetchPuzzle();}}
-                            className={`pb-3 px-3 font-semibold transition-colors text-sm ${activeTab===t.id?'tab-active':'tab-inactive'}`}>
+                        <button key={t.id} onClick={()=>{
+                            setActiveTab(t.id);
+                            if(t.id==='puzzles'&&!currentPuzzle) fetchPuzzle();
+                            if(t.id==='lichess') { fetchMyAccount(); fetchChallenges(); fetchBoardGames(); fetchTournaments(); }
+                        }} className={`pb-3 px-3 font-semibold transition-colors text-sm ${activeTab===t.id?'tab-active':'tab-inactive'}`}>
                             {t.label}
                         </button>
                     ))}
@@ -816,6 +1037,326 @@ const ChessApp = ({ user }) => {
                                         <p className="text-slate-500 text-xs mt-2">⚡ {game.speed} • 📖 {game.opening?.name||'Unknown'}</p>
                                     </div>
                                 ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ── LICHESS TAB ── */}
+                {activeTab==='lichess'&&(
+                    <div className="fade-in">
+                        {/* No token warning */}
+                        {!lichessToken&&(
+                            <div className="mb-4 p-4 rounded-xl border border-amber-600/40 flex items-center gap-3" style={{background:'rgba(120,60,0,0.25)'}}>
+                                <span className="text-2xl">⚠</span>
+                                <div>
+                                    <p className="text-amber-300 font-semibold text-sm">Lichess Token nahi mila</p>
+                                    <p className="text-amber-200/60 text-xs">⚙️ Settings tab → Lichess API Token save karo, tab sab features work karenge.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Status message */}
+                        {lichessMsg&&(
+                            <div className="mb-4 p-3 rounded-xl text-sm font-medium" style={{background:'rgba(30,41,59,0.9)',color:lichessMsg.startsWith('✅')?'#34d399':lichessMsg.startsWith('❌')?'#f87171':'#fbbf24'}}>
+                                {lichessMsg}
+                            </div>
+                        )}
+
+                        {/* My Lichess Account */}
+                        {myAccount&&(
+                            <div className="mb-5 p-4 rounded-2xl border border-slate-700/50 flex items-center gap-4" style={{background:'rgba(15,23,42,0.8)'}}>
+                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white text-xl font-bold shrink-0">
+                                    {myAccount.username?.[0]?.toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-white font-bold text-sm">{myAccount.username}</p>
+                                    <div className="flex gap-3 flex-wrap mt-1">
+                                        {myAccount.perfs?.blitz   &&<span className="text-xs text-purple-300">⚡ Blitz: {myAccount.perfs.blitz.rating}</span>}
+                                        {myAccount.perfs?.rapid   &&<span className="text-xs text-blue-300">🕐 Rapid: {myAccount.perfs.rapid.rating}</span>}
+                                        {myAccount.perfs?.bullet  &&<span className="text-xs text-red-300">🔫 Bullet: {myAccount.perfs.bullet.rating}</span>}
+                                        {myAccount.perfs?.classical&&<span className="text-xs text-green-300">♟ Classical: {myAccount.perfs.classical.rating}</span>}
+                                        {myAccount.perfs?.puzzle  &&<span className="text-xs text-amber-300">🧩 Puzzle: {myAccount.perfs.puzzle.rating}</span>}
+                                    </div>
+                                </div>
+                                <a href={`https://lichess.org/@/${myAccount.username}`} target="_blank"
+                                    className="text-xs text-blue-400 hover:text-blue-300 shrink-0">Lichess ↗</a>
+                            </div>
+                        )}
+
+                        {/* Sub-tabs */}
+                        <div className="flex gap-1 mb-5 flex-wrap">
+                            {[['account','👤 Account'],['challenges','⚔ Challenges'],['board','🎮 Board API'],['tournaments','🏆 Tournaments'],['puzzleAct','🧩 Puzzle Activity']].map(([id,lb])=>(
+                                <button key={id} onClick={()=>setLichessTab(id)}
+                                    className="px-3 py-2 rounded-lg text-xs font-semibold transition-all"
+                                    style={{background:lichessTab===id?'rgba(217,119,6,0.25)':'rgba(30,41,59,0.6)',color:lichessTab===id?'#fbbf24':'#94a3b8',border:lichessTab===id?'1px solid rgba(217,119,6,0.35)':'1px solid rgba(51,65,85,0.4)'}}>
+                                    {lb}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* ── Account sub-tab ── */}
+                        {lichessTab==='account'&&(
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.7)'}}>
+                                    <h3 className="text-amber-400 font-semibold mb-4 text-sm">Lichess Profile</h3>
+                                    {!myAccount ? (
+                                        <div className="space-y-3">
+                                            <p className="text-slate-400 text-sm">Token save karo aur yahan account details dekhein.</p>
+                                            <button onClick={()=>fetchMyAccount()} className="px-4 py-2 bg-amber-700/40 text-amber-300 rounded-lg text-sm hover:bg-amber-700/60">🔄 Refresh Account</button>
+                                        </div>
+                                    ):(
+                                        <div className="space-y-2 text-sm">
+                                            {[['Username',myAccount.username],['Title',myAccount.title||'–'],['Country',myAccount.profile?.country||'–'],['Total Games',myAccount.count?.all||0],['Wins',myAccount.count?.win||0],['Losses',myAccount.count?.loss||0],['Draws',myAccount.count?.draw||0]].map(([k,v])=>(
+                                                <div key={k} className="flex justify-between border-b border-slate-800 pb-1.5">
+                                                    <span className="text-slate-400">{k}</span>
+                                                    <span className="text-white font-medium">{v}</span>
+                                                </div>
+                                            ))}
+                                            <button onClick={()=>fetchMyAccount()} className="mt-3 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 w-full">🔄 Refresh</button>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.7)'}}>
+                                    <h3 className="text-amber-400 font-semibold mb-4 text-sm">🏁 Puzzle Race</h3>
+                                    <p className="text-slate-400 text-sm mb-4">Ek nayi Puzzle Race create karo aur dosto ko invite karo — browser mein open hoga.</p>
+                                    <button onClick={createPuzzleRace} disabled={lichessLoading.puzzleRace||!lichessToken}
+                                        className="w-full py-3 rounded-xl font-semibold text-sm transition-all"
+                                        style={{background:lichessLoading.puzzleRace?'#334155':'linear-gradient(135deg,#d97706,#b45309)',color:'#fff',opacity:!lichessToken?0.5:1}}>
+                                        {lichessLoading.puzzleRace?'Creating…':'🚀 Create Puzzle Race'}
+                                    </button>
+                                    <p className="text-slate-600 text-xs mt-3 text-center">lichess.org/racer mein join link milega</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Challenges sub-tab ── */}
+                        {lichessTab==='challenges'&&(
+                            <div className="space-y-5">
+                                {/* Send Challenge */}
+                                <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.7)'}}>
+                                    <h3 className="text-amber-400 font-semibold mb-4 text-sm">⚔ Send Challenge</h3>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                                        <div>
+                                            <label className="text-xs text-slate-400 mb-1 block">Username</label>
+                                            <input value={challengeTarget} onChange={e=>setChallengeTarget(e.target.value)}
+                                                placeholder="lichess username"
+                                                className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-400 mb-1 block">Time (min)</label>
+                                            <input type="number" value={challengeTime} onChange={e=>setChallengeTime(+e.target.value)} min="1" max="60"
+                                                className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-400 mb-1 block">Increment (sec)</label>
+                                            <input type="number" value={challengeInc} onChange={e=>setChallengeInc(+e.target.value)} min="0" max="60"
+                                                className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-400 mb-1 block">Color</label>
+                                            <select value={challengeColor} onChange={e=>setChallengeColor(e.target.value)}
+                                                className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm">
+                                                <option value="random">Random</option><option value="white">White</option><option value="black">Black</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-400 mb-1 block">Variant</label>
+                                            <select value={challengeVariant} onChange={e=>setChallengeVariant(e.target.value)}
+                                                className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm">
+                                                <option value="standard">Standard</option><option value="chess960">Chess960</option><option value="crazyhouse">Crazyhouse</option><option value="antichess">Antichess</option><option value="atomic">Atomic</option><option value="horde">Horde</option><option value="kingOfTheHill">King of the Hill</option><option value="racingKings">Racing Kings</option><option value="threeCheck">Three-Check</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex items-end">
+                                            <button onClick={sendChallenge} disabled={lichessLoading.sendChallenge||!lichessToken}
+                                                className="w-full py-2 rounded-lg font-semibold text-sm transition-all"
+                                                style={{background:'#1d4ed8',color:'#fff',opacity:!lichessToken?0.5:1}}>
+                                                {lichessLoading.sendChallenge?'Sending…':'📤 Send'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Incoming */}
+                                <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.7)'}}>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-amber-400 font-semibold text-sm">📥 Incoming ({challenges.in.length})</h3>
+                                        <button onClick={fetchChallenges} className="text-xs text-slate-400 hover:text-slate-300">🔄 Refresh</button>
+                                    </div>
+                                    {challenges.in.length===0
+                                        ? <p className="text-slate-500 text-sm text-center py-4">Koi incoming challenge nahi</p>
+                                        : challenges.in.map(c=>(
+                                            <div key={c.id} className="flex items-center justify-between p-3 rounded-xl mb-2" style={{background:'rgba(30,41,59,0.8)'}}>
+                                                <div>
+                                                    <p className="text-white text-sm font-semibold">{c.challenger?.name||'?'}</p>
+                                                    <p className="text-slate-400 text-xs">{c.timeControl?.show||''} • {c.variant?.name||'Standard'} • {c.color}</p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button onClick={()=>acceptChallenge(c.id)} disabled={lichessLoading['ch_'+c.id]}
+                                                        className="px-3 py-1.5 bg-green-700/60 text-green-300 rounded-lg text-xs font-semibold hover:bg-green-700/80">
+                                                        {lichessLoading['ch_'+c.id]?'…':'✅ Accept'}
+                                                    </button>
+                                                    <button onClick={()=>declineChallenge(c.id)} disabled={lichessLoading['dc_'+c.id]}
+                                                        className="px-3 py-1.5 bg-red-800/50 text-red-300 rounded-lg text-xs font-semibold hover:bg-red-800/70">
+                                                        {lichessLoading['dc_'+c.id]?'…':'❌ Decline'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    }
+                                </div>
+
+                                {/* Outgoing */}
+                                <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.7)'}}>
+                                    <h3 className="text-amber-400 font-semibold mb-4 text-sm">📤 Outgoing ({challenges.out.length})</h3>
+                                    {challenges.out.length===0
+                                        ? <p className="text-slate-500 text-sm text-center py-4">Koi outgoing challenge nahi</p>
+                                        : challenges.out.map(c=>(
+                                            <div key={c.id} className="flex items-center justify-between p-3 rounded-xl mb-2" style={{background:'rgba(30,41,59,0.8)'}}>
+                                                <div>
+                                                    <p className="text-white text-sm font-semibold">→ {c.destUser?.name||'?'}</p>
+                                                    <p className="text-slate-400 text-xs">{c.timeControl?.show||''} • {c.variant?.name||'Standard'}</p>
+                                                </div>
+                                                <button onClick={()=>cancelChallenge(c.id)} disabled={lichessLoading['cc_'+c.id]}
+                                                    className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg text-xs hover:bg-slate-600">
+                                                    {lichessLoading['cc_'+c.id]?'…':'Cancel'}
+                                                </button>
+                                            </div>
+                                        ))
+                                    }
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Board API sub-tab ── */}
+                        {lichessTab==='board'&&(
+                            <div className="space-y-5">
+                                <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.7)'}}>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-amber-400 font-semibold text-sm">🎮 Active Board Games</h3>
+                                        <button onClick={fetchBoardGames} className="text-xs text-slate-400 hover:text-slate-300">🔄 Refresh</button>
+                                    </div>
+                                    {lichessLoading.boardGames
+                                        ? <p className="text-slate-400 text-sm text-center py-4">Loading…</p>
+                                        : boardGames.length===0
+                                            ? <p className="text-slate-500 text-sm text-center py-4">Koi active game nahi. Lichess pe game start karo.</p>
+                                            : boardGames.map(g=>(
+                                                <div key={g.gameId} className="p-4 rounded-xl mb-3 border border-slate-700/40" style={{background:'rgba(30,41,59,0.8)'}}>
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <div>
+                                                            <p className="text-white text-sm font-semibold">{g.opponent?.username||'?'} ({g.opponent?.rating||'?'})</p>
+                                                            <p className="text-slate-400 text-xs">{g.speed} • {g.variant} • Playing as: <span className={g.color==='white'?'text-white':'text-gray-400'}>{g.color}</span></p>
+                                                            {g.isMyTurn&&<span className="text-green-400 text-xs font-bold">● Your turn</span>}
+                                                        </div>
+                                                        <div className="flex gap-2 flex-wrap">
+                                                            <button onClick={()=>streamBoardGame(g.gameId)}
+                                                                className="px-3 py-1.5 bg-blue-700/60 text-blue-300 rounded-lg text-xs hover:bg-blue-700/80">📡 Stream</button>
+                                                            <button onClick={()=>abortGame(g.gameId)}
+                                                                className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg text-xs hover:bg-slate-600">Abort</button>
+                                                            <button onClick={()=>resignGame(g.gameId)}
+                                                                className="px-3 py-1.5 bg-red-800/50 text-red-300 rounded-lg text-xs hover:bg-red-800/70">Resign</button>
+                                                        </div>
+                                                    </div>
+                                                    {/* Move input */}
+                                                    {activeGameId===g.gameId&&(
+                                                        <div className="flex gap-2 mt-2">
+                                                            <input value={moveInput} onChange={e=>setMoveInput(e.target.value)}
+                                                                placeholder="Move (e.g. e2e4)" onKeyDown={e=>{if(e.key==='Enter')boardMove(g.gameId,moveInput);}}
+                                                                className="flex-1 px-3 py-2 bg-slate-900 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm font-mono" />
+                                                            <button onClick={()=>boardMove(g.gameId,moveInput)}
+                                                                className="px-4 py-2 bg-amber-700 text-white rounded-lg text-sm hover:bg-amber-600 font-semibold">▶ Play</button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))
+                                    }
+                                </div>
+                                {/* Game event stream */}
+                                {gameEvents.length>0&&(
+                                    <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.7)'}}>
+                                        <h3 className="text-amber-400 font-semibold mb-3 text-sm">📡 Live Game Events</h3>
+                                        <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-xs">
+                                            {gameEvents.map((e,i)=>(
+                                                <div key={i} className="p-2 rounded" style={{background:'rgba(30,41,59,0.7)'}}>
+                                                    <span className="text-amber-400">[{e.type}]</span>{' '}
+                                                    <span className="text-slate-300">{e.moves||JSON.stringify(e).slice(0,80)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* ── Tournaments sub-tab ── */}
+                        {lichessTab==='tournaments'&&(
+                            <div className="space-y-4">
+                                <div className="flex gap-3 mb-2">
+                                    <button onClick={fetchTournaments} disabled={lichessLoading.tournaments}
+                                        className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700">
+                                        {lichessLoading.tournaments?'Loading…':'🔄 Refresh Tournaments'}
+                                    </button>
+                                </div>
+                                {tournaments.length===0
+                                    ? <div className="rounded-xl p-6 text-center border border-slate-700/40" style={{background:'rgba(15,23,42,0.7)'}}>
+                                        <p className="text-slate-400 text-sm">Refresh karein ya Lichess pe check karein</p>
+                                      </div>
+                                    : tournaments.map(t=>(
+                                        <div key={t.id} className="rounded-xl p-4 border border-slate-700/40" style={{background:'rgba(15,23,42,0.7)'}}>
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex-1 min-w-0 mr-3">
+                                                    <p className="text-white font-semibold text-sm truncate">{t.fullName||t.name}</p>
+                                                    <div className="flex gap-3 flex-wrap mt-1">
+                                                        <span className="text-slate-400 text-xs">⏱ {t.clock?.limit/60}+{t.clock?.increment}</span>
+                                                        <span className="text-slate-400 text-xs">👥 {t.nbPlayers||0} players</span>
+                                                        <span className={`text-xs font-semibold ${t.status===10?'text-green-400':t.status===20?'text-amber-400':'text-blue-400'}`}>
+                                                            {t.status===10?'● Starting':t.status===20?'● Started':'● Upcoming'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex gap-2 shrink-0">
+                                                    <button onClick={()=>joinTournament(t.id)} disabled={lichessLoading['tj_'+t.id]||!lichessToken}
+                                                        className="px-3 py-1.5 bg-green-700/50 text-green-300 rounded-lg text-xs font-semibold hover:bg-green-700/70"
+                                                        style={{opacity:!lichessToken?0.5:1}}>
+                                                        {lichessLoading['tj_'+t.id]?'…':'Join'}
+                                                    </button>
+                                                    <a href={`https://lichess.org/tournament/${t.id}`} target="_blank"
+                                                        className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg text-xs hover:bg-slate-600">View ↗</a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                }
+                            </div>
+                        )}
+
+                        {/* ── Puzzle Activity sub-tab ── */}
+                        {lichessTab==='puzzleAct'&&(
+                            <div className="space-y-4">
+                                <div className="flex gap-3 mb-2">
+                                    <button onClick={fetchPuzzleActivity} disabled={lichessLoading.puzzleActivity||!lichessToken}
+                                        className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700"
+                                        style={{opacity:!lichessToken?0.5:1}}>
+                                        {lichessLoading.puzzleActivity?'Loading…':'🔄 Load Puzzle Activity'}
+                                    </button>
+                                </div>
+                                {puzzleActivity.length===0
+                                    ? <div className="rounded-xl p-6 text-center border border-slate-700/40" style={{background:'rgba(15,23,42,0.7)'}}>
+                                        <p className="text-slate-400 text-sm">Load karo apni recent puzzle activity dekhne ke liye</p>
+                                      </div>
+                                    : puzzleActivity.map((p,i)=>(
+                                        <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-slate-700/40" style={{background:'rgba(15,23,42,0.7)'}}>
+                                            <div>
+                                                <p className="text-white text-sm font-semibold">Puzzle #{p.id}</p>
+                                                <p className="text-slate-400 text-xs">Rating: {p.puzzle?.rating||'?'} • Themes: {p.puzzle?.themes?.join(', ')||'–'}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className={`text-sm font-bold ${p.win?'text-green-400':'text-red-400'}`}>{p.win?'✅ Win':'❌ Loss'}</span>
+                                                <p className="text-slate-500 text-xs">{p.date?new Date(p.date).toLocaleDateString():''}</p>
+                                            </div>
+                                        </div>
+                                    ))
+                                }
                             </div>
                         )}
                     </div>
