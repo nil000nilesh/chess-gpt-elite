@@ -471,7 +471,7 @@ const ChessApp = ({ user }) => {
 
     const renderMoveHistory=()=>{const pairs=[];for(let i=0;i<moveHistory.length;i+=2)pairs.push({num:Math.floor(i/2)+1,w:moveHistory[i],b:moveHistory[i+1]||''});return(<div className="max-h-52 overflow-y-auto space-y-0.5 text-sm font-mono">{pairs.length===0?<p className="text-slate-500 text-center italic text-xs py-4">Make a move…</p>:pairs.map(p=><div key={p.num} className="flex gap-2 text-slate-300 px-1 py-0.5 rounded hover:bg-slate-700/30"><span className="text-slate-600 w-8">{p.num}.</span><span className="w-14">{p.w}</span><span className="w-14">{p.b}</span></div>)}</div>);};
 
-    const TABS=[{id:'play',label:'♟ Play'},{id:'puzzles',label:'🧩 Puzzles'},{id:'games',label:'🎮 Games'},{id:'lichess',label:'♞ Lichess'},{id:'settings',label:'⚙️ Settings'}];
+    const TABS=[{id:'play',label:'♟ Play'},{id:'puzzles',label:'🧩 Puzzles'},{id:'games',label:'🎮 Games'},{id:'lichess',label:'♞ Lichess'},...(user.email===ADMIN_EMAIL?[{id:'settings',label:'⚙️ Settings'}]:[])];
 
     return (
         <div className="min-h-screen p-4 sm:p-6" style={{background:'radial-gradient(ellipse at top,#0f172a 0%,#020617 80%)'}}>
