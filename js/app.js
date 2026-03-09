@@ -38,98 +38,183 @@ const AccessDenied = ({ user }) => (
 );
 
 /* ══════════════════════════════════
-   ADMIN PANEL COMPONENT
-   Sirf admin (ADMIN_EMAIL) ko dikhega
+   USERS TAB — Admin Only
+   User access manage karo
+   Har user ka data Firestore mein alag
 ══════════════════════════════════ */
-const AdminPanel = () => {
-    const [users, setUsers]       = useState([]);
-    const [newEmail, setNewEmail] = useState('');
-    const [loading, setLoading]   = useState(true);
-    const [msg, setMsg]           = useState('');
+const UsersTab = () => {
+    const [allowedEmails, setAllowedEmails] = useState([]);
+    const [newEmail,  setNewEmail]  = useState('');
+    const [loading,   setLoading]   = useState(true);
+    const [saving,    setSaving]    = useState(false);
+    const [msg,       setMsg]       = useState('');
+    const [confirmDel,setConfirmDel]= useState(null); // email being confirmed for delete
 
-    const showMsg = (m) => { setMsg(m); setTimeout(()=>setMsg(''), 3000); };
+    const flash = (m) => { setMsg(m); setTimeout(()=>setMsg(''), 3500); };
 
-    // Firestore se allowed users load karo
-    const loadUsers = async () => {
+    // Firestore se load karo
+    const loadList = async () => {
         setLoading(true);
         try {
             const doc = await db.collection('admin').doc('access').get();
-            if (doc.exists) setUsers(doc.data().allowedEmails || []);
-            else setUsers([]);
-        } catch(e) { showMsg('❌ Load failed: ' + e.message); }
+            setAllowedEmails(doc.exists ? (doc.data().allowedEmails || []) : []);
+        } catch(e) { flash('❌ Load failed: ' + e.message); }
         setLoading(false);
     };
 
-    useEffect(() => { loadUsers(); }, []);
+    useEffect(() => { loadList(); }, []);
 
-    const saveUsers = async (updatedList) => {
-        await db.collection('admin').doc('access').set({ allowedEmails: updatedList });
-        setUsers(updatedList);
+    // Firestore mein save karo
+    const persist = async (list) => {
+        setSaving(true);
+        try {
+            await db.collection('admin').doc('access').set({ allowedEmails: list });
+            setAllowedEmails(list);
+        } catch(e) { flash('❌ Save failed: ' + e.message); }
+        setSaving(false);
     };
 
     const addUser = async () => {
         const email = newEmail.trim().toLowerCase();
-        if (!email || !email.includes('@')) { showMsg('⚠ Valid email daalo'); return; }
-        if (users.includes(email)) { showMsg('⚠ Pehle se hai'); return; }
-        try {
-            await saveUsers([...users, email]);
-            setNewEmail('');
-            showMsg('✅ ' + email + ' add ho gaya');
-        } catch(e) { showMsg('❌ ' + e.message); }
+        if (!email.includes('@')) { flash('⚠ Valid email daalo'); return; }
+        if (allowedEmails.includes(email)) { flash('⚠ ' + email + ' pehle se hai'); return; }
+        await persist([...allowedEmails, email]);
+        setNewEmail('');
+        flash('✅ ' + email + ' add ho gaya');
     };
 
     const removeUser = async (email) => {
-        try {
-            await saveUsers(users.filter(e => e !== email));
-            showMsg('🗑 ' + email + ' remove ho gaya');
-        } catch(e) { showMsg('❌ ' + e.message); }
+        await persist(allowedEmails.filter(e => e !== email));
+        setConfirmDel(null);
+        flash('🗑 ' + email + ' remove ho gaya');
     };
 
     return (
-        <div className="rounded-2xl p-5 border border-amber-500/30" style={{background:'rgba(120,60,0,0.15)'}}>
-            <h3 className="text-amber-400 font-semibold mb-1 flex items-center gap-2">👑 Admin Panel — User Access</h3>
-            <p className="text-slate-500 text-xs mb-4">Jinhe app use karni hai unka email yahan add karo</p>
+        <div className="max-w-2xl mx-auto space-y-5 fade-in">
 
-            {/* Message */}
-            {msg && <div className="mb-3 p-2 rounded-lg text-xs text-center font-medium" style={{background:'rgba(30,41,59,0.9)',color:msg.startsWith('✅')?'#34d399':msg.startsWith('❌')||msg.startsWith('⚠')?'#f87171':'#fbbf24'}}>{msg}</div>}
+            {/* Header card */}
+            <div className="rounded-2xl p-5 border border-amber-500/30" style={{background:'rgba(120,60,0,0.12)'}}>
+                <div className="flex items-center gap-3 mb-1">
+                    <span className="text-2xl">👑</span>
+                    <div>
+                        <h2 className="text-amber-400 font-bold text-lg">User Access Management</h2>
+                        <p className="text-slate-500 text-xs">Sirf admin ko yeh tab dikh raha hai</p>
+                    </div>
+                </div>
+            </div>
 
-            {/* Add user input */}
-            <div className="flex gap-2 mb-4">
-                <input value={newEmail} onChange={e=>setNewEmail(e.target.value)}
-                    onKeyDown={e=>e.key==='Enter'&&addUser()}
-                    placeholder="user@gmail.com"
-                    className="flex-1 px-3 py-2 bg-slate-900 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm" />
-                <button onClick={addUser}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
-                    style={{background:'#d97706'}}>
-                    ➕ Add
-                </button>
+            {/* Flash message */}
+            {msg && (
+                <div className="p-3 rounded-xl text-sm font-medium text-center"
+                    style={{background:'rgba(30,41,59,0.95)', color: msg.startsWith('✅')?'#34d399': msg.startsWith('❌')||msg.startsWith('⚠')?'#f87171':'#fbbf24'}}>
+                    {msg}
+                </div>
+            )}
+
+            {/* Add new user */}
+            <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.8)'}}>
+                <h3 className="text-white font-semibold mb-3 text-sm flex items-center gap-2">
+                    ➕ Naya User Add Karo
+                </h3>
+                <div className="flex gap-2">
+                    <input
+                        value={newEmail}
+                        onChange={e => setNewEmail(e.target.value)}
+                        onKeyDown={e => e.key==='Enter' && addUser()}
+                        placeholder="user@gmail.com"
+                        className="flex-1 px-4 py-3 bg-slate-900 text-white rounded-xl border border-slate-600 focus:border-amber-500 focus:outline-none text-sm"
+                    />
+                    <button onClick={addUser} disabled={saving}
+                        className="px-5 py-3 rounded-xl font-semibold text-sm text-white transition-all"
+                        style={{background: saving ? '#334155' : '#d97706', minWidth: 80}}>
+                        {saving ? '…' : '➕ Add'}
+                    </button>
+                </div>
+                <p className="text-slate-600 text-xs mt-2">
+                    User ka Google account email daalo. Wo login karke app use kar sakenge.
+                </p>
             </div>
 
             {/* Users list */}
-            {loading ? <p className="text-slate-400 text-sm text-center py-3">Loading…</p> : (
-                <div className="space-y-2">
-                    {users.length === 0
-                        ? <p className="text-slate-500 text-sm text-center py-3">Koi user nahi. Upar email add karo.</p>
-                        : users.map(email => (
-                            <div key={email} className="flex items-center justify-between px-3 py-2 rounded-xl" style={{background:'rgba(30,41,59,0.8)'}}>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-green-400 text-xs">●</span>
-                                    <span className="text-slate-300 text-sm font-mono">{email}</span>
-                                    {email === ADMIN_EMAIL && <span className="text-xs px-2 py-0.5 rounded-full text-amber-300" style={{background:'rgba(217,119,6,0.2)'}}>👑 Admin</span>}
+            <div className="rounded-2xl p-5 border border-slate-700/50" style={{background:'rgba(15,23,42,0.8)'}}>
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-white font-semibold text-sm">
+                        👥 Allowed Users
+                        <span className="ml-2 px-2 py-0.5 rounded-full text-xs" style={{background:'rgba(30,41,59,0.9)',color:'#94a3b8'}}>
+                            {allowedEmails.length}
+                        </span>
+                    </h3>
+                    <button onClick={loadList} className="text-slate-500 hover:text-slate-300 text-xs transition-colors">
+                        🔄 Refresh
+                    </button>
+                </div>
+
+                {loading ? (
+                    <div className="text-center py-8">
+                        <div style={{width:28,height:28,border:'3px solid #334155',borderTopColor:'#d97706',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 8px'}} />
+                        <p className="text-slate-500 text-sm">Loading users…</p>
+                    </div>
+                ) : allowedEmails.length === 0 ? (
+                    <div className="text-center py-8">
+                        <div className="text-4xl mb-3">👤</div>
+                        <p className="text-slate-400 text-sm">Koi user nahi mila</p>
+                        <p className="text-slate-600 text-xs mt-1">Upar email daalo pehla user add karne ke liye</p>
+                    </div>
+                ) : (
+                    <div className="space-y-2">
+                        {allowedEmails.map(email => (
+                            <div key={email} className="flex items-center justify-between px-4 py-3 rounded-xl transition-all"
+                                style={{background:'rgba(30,41,59,0.7)', border:'1px solid rgba(51,65,85,0.4)'}}>
+                                <div className="flex items-center gap-3 min-w-0">
+                                    {/* Avatar initial */}
+                                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
+                                        style={{background: email===ADMIN_EMAIL ? 'rgba(217,119,6,0.3)' : 'rgba(59,130,246,0.2)',
+                                                color:   email===ADMIN_EMAIL ? '#fbbf24' : '#60a5fa'}}>
+                                        {email[0].toUpperCase()}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="text-slate-200 text-sm truncate">{email}</p>
+                                        {email === ADMIN_EMAIL && (
+                                            <span className="text-xs text-amber-400 font-medium">👑 Admin (aap)</span>
+                                        )}
+                                    </div>
                                 </div>
+
+                                {/* Remove button — admin ko nahi dikhaenge */}
                                 {email !== ADMIN_EMAIL && (
-                                    <button onClick={()=>removeUser(email)}
-                                        className="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded hover:bg-red-900/30 transition-colors">
-                                        🗑 Remove
-                                    </button>
+                                    confirmDel === email ? (
+                                        <div className="flex gap-2 shrink-0">
+                                            <button onClick={()=>removeUser(email)}
+                                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-700/70 text-red-200 hover:bg-red-700">
+                                                Haan, hatao
+                                            </button>
+                                            <button onClick={()=>setConfirmDel(null)}
+                                                className="px-3 py-1.5 rounded-lg text-xs bg-slate-700 text-slate-300 hover:bg-slate-600">
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={()=>setConfirmDel(email)}
+                                            className="text-slate-500 hover:text-red-400 text-xs px-2 py-1 rounded transition-colors shrink-0">
+                                            🗑 Remove
+                                        </button>
+                                    )
                                 )}
                             </div>
-                        ))
-                    }
-                    <p className="text-slate-600 text-xs text-right pt-1">{users.length} user(s) allowed</p>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Info card */}
+            <div className="rounded-2xl p-4 border border-blue-800/30" style={{background:'rgba(30,58,138,0.1)'}}>
+                <h4 className="text-blue-400 font-semibold mb-2 text-sm">ℹ️ Data Isolation ke baare mein</h4>
+                <div className="space-y-1.5 text-xs text-slate-400">
+                    <p>• Har user ka data Firestore mein <code className="text-amber-400">users/&#123;uid&#125;/</code> ke neeche alag store hota hai</p>
+                    <p>• Koi bhi dusre ka data nahi dekh sakta — Firebase Security Rules se protected hai</p>
+                    <p>• User remove karne se unka data delete nahi hota, sirf login access band hota hai</p>
                 </div>
-            )}
+            </div>
         </div>
     );
 };
@@ -250,8 +335,6 @@ const SettingsTab = ({ user }) => {
                     <p>• Keys are stored in <code className="text-amber-400 text-xs">Firestore → users/{user.uid.slice(0,8)}…/settings/apiKeys</code></p>
                 </div>
             </div>
-            {/* Admin Panel — sirf admin ko dikhega */}
-            {user.email === ADMIN_EMAIL && <AdminPanel />}
         </div>
     );
 };
@@ -471,7 +554,7 @@ const ChessApp = ({ user }) => {
 
     const renderMoveHistory=()=>{const pairs=[];for(let i=0;i<moveHistory.length;i+=2)pairs.push({num:Math.floor(i/2)+1,w:moveHistory[i],b:moveHistory[i+1]||''});return(<div className="max-h-52 overflow-y-auto space-y-0.5 text-sm font-mono">{pairs.length===0?<p className="text-slate-500 text-center italic text-xs py-4">Make a move…</p>:pairs.map(p=><div key={p.num} className="flex gap-2 text-slate-300 px-1 py-0.5 rounded hover:bg-slate-700/30"><span className="text-slate-600 w-8">{p.num}.</span><span className="w-14">{p.w}</span><span className="w-14">{p.b}</span></div>)}</div>);};
 
-    const TABS=[{id:'play',label:'♟ Play'},{id:'puzzles',label:'🧩 Puzzles'},{id:'games',label:'🎮 Games'},{id:'lichess',label:'♞ Lichess'},...(user.email===ADMIN_EMAIL?[{id:'settings',label:'⚙️ Settings'}]:[])];
+    const TABS=[{id:"play",label:"♟ Play"},{id:"puzzles",label:"🧩 Puzzles"},{id:"games",label:"🎮 Games"},{id:"lichess",label:"♞ Lichess"},...(user.email===ADMIN_EMAIL?[{id:"users",label:"👥 Users"},{id:"settings",label:"⚙️ Settings"}]:[])];
 
     return (
         <div className="min-h-screen p-4 sm:p-6" style={{background:'radial-gradient(ellipse at top,#0f172a 0%,#020617 80%)'}}>
@@ -592,7 +675,10 @@ const ChessApp = ({ user }) => {
                     </div>
                 )}
 
-                {/* ── SETTINGS TAB ── */}
+                {/* ── USERS TAB (Admin only) ── */}
+                {activeTab==='users'&&(<div className="fade-in"><UsersTab /></div>)}
+
+                {/* ── SETTINGS TAB (Admin only) ── */}
                 {activeTab==='settings'&&(<div className="fade-in"><SettingsTab user={user} /></div>)}
             </div>
 
