@@ -217,41 +217,34 @@ const BOARD_THEMES = [
     {id:'night',      name:'Night',      cat:'👑 Classic',  light:'#3d4a5c',dark:'#1a2332',border:'#0f1826',lastLight:'#5a6a44',lastDark:'#3a4a28',labelLight:'#6b8aaa',labelDark:'#4a6888',glow:'rgba(15,24,38,.5)'},
 ];
 
-/* ── Piece Styles ─────────────────── */
-const PIECE_STYLES = [
-    {id:'classic3d', name:'3D Classic', desc:'Embossed shadows'},
-    {id:'flat',      name:'Flat',       desc:'Minimal & clean'},
-    {id:'outline',   name:'Outline',    desc:'Hollow strokes'},
-    {id:'neon',      name:'Neon',       desc:'Electric glow'},
-    {id:'chessdotcom',name:'Chess.com', desc:'Ivory & ebony'},
-    {id:'lichess',   name:'Lichess',    desc:'Sharp & refined'},
+/* ── SVG Piece Sets ───────────────── */
+const PIECE_CDN = 'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/';
+
+const PIECE_SETS = [
+    {id:'cburnett',  name:'Cburnett',   cat:'♞ Lichess',   preview:'wN'},
+    {id:'merida',    name:'Merida',     cat:'♞ Lichess',   preview:'wN'},
+    {id:'alpha',     name:'Alpha',      cat:'♞ Lichess',   preview:'wN'},
+    {id:'pirouetti', name:'Pirouetti',  cat:'♞ Lichess',   preview:'wN'},
+    {id:'chessnut',  name:'Chessnut',   cat:'♞ Lichess',   preview:'wN'},
+    {id:'chess7',    name:'Chess7',     cat:'♞ Lichess',   preview:'wN'},
+    {id:'california',name:'California', cat:'♟ Chess.com', preview:'wN'},
+    {id:'maestro',   name:'Maestro',    cat:'♟ Chess.com', preview:'wN'},
+    {id:'gioco',     name:'Gioco',      cat:'♟ Chess.com', preview:'wN'},
+    {id:'tatiana',   name:'Tatiana',    cat:'♟ Chess.com', preview:'wN'},
+    {id:'staunty',   name:'Staunty',    cat:'👑 Classic',  preview:'wN'},
+    {id:'spatial',   name:'Spatial',    cat:'👑 Classic',  preview:'wN'},
+    {id:'governor',  name:'Governor',   cat:'👑 Classic',  preview:'wN'},
+    {id:'dubrovny',  name:'Dubrovny',   cat:'👑 Classic',  preview:'wN'},
+    {id:'fresca',    name:'Fresca',     cat:'👑 Classic',  preview:'wN'},
+    {id:'kosal',     name:'Kosal',      cat:'👑 Classic',  preview:'wN'},
 ];
 
-function getPieceStyle(color, styleId) {
-    const w = color === WHITE;
-    switch (styleId) {
-        case 'flat':
-            return { color: w?'#f0f0f0':'#1e1e1e', WebkitTextStroke: w?'0.5px #aaa':'0.5px #000', textShadow:'none', filter:'none' };
-        case 'outline':
-            return { color:'transparent', WebkitTextStroke: w?'1.5px #e0e0e0':'1.5px #1a1a1a', textShadow:'none', filter:'none' };
-        case 'neon':
-            return w
-                ? { color:'#00e5ff', textShadow:'0 0 8px #00e5ff,0 0 20px #00b8d9,0 0 40px #0091bd', WebkitTextStroke:'0', filter:'none' }
-                : { color:'#ff4081', textShadow:'0 0 8px #ff4081,0 0 20px #f50057,0 0 40px #c51162', WebkitTextStroke:'0', filter:'none' };
-        case 'chessdotcom':
-            return w
-                ? { color:'#f5deb3', WebkitTextStroke:'1px #8b7355', textShadow:'0 2px 6px rgba(0,0,0,.5),2px 2px 0 #c8a85a', filter:'drop-shadow(0 3px 4px rgba(0,0,0,.4))' }
-                : { color:'#2c1810', WebkitTextStroke:'1px #000', textShadow:'0 2px 6px rgba(0,0,0,.7),1px 1px 0 #5d3a1a', filter:'drop-shadow(0 3px 4px rgba(0,0,0,.6))' };
-        case 'lichess':
-            return w
-                ? { color:'#fff', WebkitTextStroke:'1px #777', textShadow:'0 1px 3px rgba(0,0,0,.5),1px 1px 0 #ccc', filter:'drop-shadow(0 2px 2px rgba(0,0,0,.35))' }
-                : { color:'#3a3a3a', WebkitTextStroke:'1px #000', textShadow:'0 1px 3px rgba(0,0,0,.7)', filter:'drop-shadow(0 2px 2px rgba(0,0,0,.5))' };
-        default: // classic3d
-            return w
-                ? { color:'#fff', WebkitTextStroke:'1px #555', textShadow:'0 2px 4px rgba(0,0,0,.6),0 4px 8px rgba(0,0,0,.3),1px 1px 0 #ccc,-1px -1px 0 #e0e0e0', filter:'drop-shadow(0 3px 3px rgba(0,0,0,.4))', transform:'translateY(-1px)' }
-                : { color:'#1a1a1a', WebkitTextStroke:'1px #000', textShadow:'0 2px 4px rgba(0,0,0,.6),0 4px 8px rgba(0,0,0,.3),1px 1px 0 #444', filter:'drop-shadow(0 3px 3px rgba(0,0,0,.5))', transform:'translateY(-1px)' };
-    }
-}
+// Returns CDN URL for a piece SVG
+const getPieceImg = (color, type, setId) => {
+    const c = color === WHITE ? 'w' : 'b';
+    const t = type.toUpperCase();
+    return `${PIECE_CDN}${setId}/${c}${t}.svg`;
+};
 
 /* ══════════════════════════════════════
    LOGIN PAGE
@@ -454,10 +447,12 @@ const SettingsTab = ({ user }) => {
 /* ══════════════════════════════════════
    STYLE PANEL (Board + Piece)
 ══════════════════════════════════════ */
-const StylePanel = ({ boardTheme, setBoardTheme, pieceStyle, setPieceStyle }) => {
+const StylePanel = ({ boardTheme, setBoardTheme, pieceSet, setPieceSet }) => {
     const [expanded, setExpanded] = useState(false);
-    const [activecat, setActiveCat] = useState('♟ Chess.com');
-    const cats = ['♟ Chess.com','♞ Lichess','👑 Classic'];
+    const [activecat, setActiveCat] = useState('♞ Lichess');
+    const [activePieceCat, setActivePieceCat] = useState('♞ Lichess');
+    const boardCats = ['♟ Chess.com','♞ Lichess','👑 Classic'];
+    const pieceCats = ['♞ Lichess','♟ Chess.com','👑 Classic'];
 
     return (
         <div className="rounded-xl border border-slate-700/50 overflow-hidden" style={{background:'rgba(30,41,59,0.8)'}}>
@@ -468,7 +463,7 @@ const StylePanel = ({ boardTheme, setBoardTheme, pieceStyle, setPieceStyle }) =>
                 <span className="text-slate-400 text-xs">{expanded?'▲ Less':'▼ More'}</span>
             </button>
 
-            {/* Quick row (always visible) */}
+            {/* Quick board row (always visible) */}
             <div className="px-3 pb-3 flex gap-2 overflow-x-auto">
                 {BOARD_THEMES.slice(0,6).map(t=>(
                     <button key={t.id} onClick={()=>setBoardTheme(t)} title={t.name}
@@ -483,40 +478,57 @@ const StylePanel = ({ boardTheme, setBoardTheme, pieceStyle, setPieceStyle }) =>
             </div>
 
             {expanded && (
-                <div className="border-t border-slate-700/50 p-3 space-y-4">
-                    {/* Category tabs */}
-                    <div className="flex gap-1">
-                        {cats.map(c=>(
-                            <button key={c} onClick={()=>setActiveCat(c)}
-                                className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all"
-                                style={{background:activecat===c?'rgba(217,119,6,0.2)':'transparent',color:activecat===c?'#fbbf24':'#94a3b8',border:activecat===c?'1px solid rgba(217,119,6,0.3)':'1px solid transparent'}}>
-                                {c}
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Theme grid */}
-                    <div className="grid grid-cols-3 gap-2">
-                        {BOARD_THEMES.filter(t=>t.cat===activecat).map(t=>(
-                            <button key={t.id} onClick={()=>setBoardTheme(t)}
-                                className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${boardTheme.id===t.id?'ring-2 ring-amber-400 bg-slate-700/70':'hover:bg-slate-700/40 border border-transparent'}`}>
-                                <div className="theme-preview border border-slate-600/50" style={{width:40,height:40}}>
-                                    <div style={{backgroundColor:t.light}} /> <div style={{backgroundColor:t.dark}} />
-                                    <div style={{backgroundColor:t.dark}} /> <div style={{backgroundColor:t.light}} />
-                                </div>
-                                <span className="text-xs text-slate-300">{t.name}</span>
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Piece style grid */}
-                    <div className="pt-3 border-t border-slate-700/50">
-                        <p className="text-xs text-slate-500 mb-2 font-medium">♟ Piece Style</p>
+                <div className="border-t border-slate-700/50 p-3 space-y-5">
+                    {/* Board theme section */}
+                    <div>
+                        <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wide">Board Theme</p>
+                        <div className="flex gap-1 mb-3">
+                            {boardCats.map(c=>(
+                                <button key={c} onClick={()=>setActiveCat(c)}
+                                    className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all"
+                                    style={{background:activecat===c?'rgba(217,119,6,0.2)':'transparent',color:activecat===c?'#fbbf24':'#94a3b8',border:activecat===c?'1px solid rgba(217,119,6,0.3)':'1px solid rgba(51,65,85,0.3)'}}>
+                                    {c}
+                                </button>
+                            ))}
+                        </div>
                         <div className="grid grid-cols-3 gap-2">
-                            {PIECE_STYLES.map(ps=>(
-                                <button key={ps.id} onClick={()=>setPieceStyle(ps.id)}
-                                    className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${pieceStyle===ps.id?'ring-2 ring-amber-400 bg-slate-700/70':'hover:bg-slate-700/40'}`}>
-                                    <span className="chess-piece-3d" style={{fontSize:28,...getPieceStyle(WHITE,ps.id),textShadow:ps.id==='outline'?getPieceStyle(WHITE,ps.id).textShadow:getPieceStyle(WHITE,ps.id).textShadow}}>♛</span>
+                            {BOARD_THEMES.filter(t=>t.cat===activecat).map(t=>(
+                                <button key={t.id} onClick={()=>setBoardTheme(t)}
+                                    className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${boardTheme.id===t.id?'ring-2 ring-amber-400 bg-slate-700/70':'hover:bg-slate-700/40 border border-transparent'}`}>
+                                    <div className="theme-preview border border-slate-600/50" style={{width:40,height:40}}>
+                                        <div style={{backgroundColor:t.light}} /> <div style={{backgroundColor:t.dark}} />
+                                        <div style={{backgroundColor:t.dark}} /> <div style={{backgroundColor:t.light}} />
+                                    </div>
+                                    <span className="text-xs text-slate-300">{t.name}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Piece set section */}
+                    <div className="pt-3 border-t border-slate-700/50">
+                        <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wide">Piece Set</p>
+                        <div className="flex gap-1 mb-3">
+                            {pieceCats.map(c=>(
+                                <button key={c} onClick={()=>setActivePieceCat(c)}
+                                    className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all"
+                                    style={{background:activePieceCat===c?'rgba(217,119,6,0.2)':'transparent',color:activePieceCat===c?'#fbbf24':'#94a3b8',border:activePieceCat===c?'1px solid rgba(217,119,6,0.3)':'1px solid rgba(51,65,85,0.3)'}}>
+                                    {c}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                            {PIECE_SETS.filter(ps=>ps.cat===activePieceCat).map(ps=>(
+                                <button key={ps.id} onClick={()=>setPieceSet(ps.id)}
+                                    className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${pieceSet===ps.id?'ring-2 ring-amber-400 bg-slate-700/70':'hover:bg-slate-700/40'}`}>
+                                    <div className="flex gap-0.5">
+                                        <img src={getPieceImg(WHITE,'n',ps.id)} alt="wN"
+                                            style={{width:28,height:28,objectFit:'contain'}}
+                                            onError={e=>{e.target.style.display='none';}} />
+                                        <img src={getPieceImg(BLACK,'n',ps.id)} alt="bN"
+                                            style={{width:28,height:28,objectFit:'contain'}}
+                                            onError={e=>{e.target.style.display='none';}} />
+                                    </div>
                                     <span className="text-xs text-slate-300">{ps.name}</span>
                                 </button>
                             ))}
@@ -551,8 +563,8 @@ const ChessApp = ({ user }) => {
     const [userGames,           setUserGames]           = useState([]);
     const [loadingGames,        setLoadingGames]        = useState(false);
     const [playerStats,         setPlayerStats]         = useState(null);
-    const [boardTheme,          setBoardTheme]          = useState(BOARD_THEMES[0]);
-    const [pieceStyle,          setPieceStyle]          = useState('classic3d');
+    const [boardTheme,          setBoardTheme]          = useState(BOARD_THEMES[6]); // li-brown default
+    const [pieceSet,            setPieceSet]            = useState('cburnett');
     const [lichessToken,        setLichessToken]        = useState('');
     const [myAccount,           setMyAccount]           = useState(null);
     // Lichess tab state
@@ -752,7 +764,8 @@ const ChessApp = ({ user }) => {
                             return (
                                 <div key={`${r}-${c}`} className={`w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-4xl sm:text-5xl font-bold cursor-pointer select-none relative${cls}`}
                                     style={{backgroundColor:bg}} onClick={()=>handlePuzzleMove(r,c)}>
-                                    {piece&&<span className="chess-piece-3d" style={getPieceStyle(piece.color,pieceStyle)}>{PIECE_SYMBOLS[piece.color][piece.type]}</span>}
+                                    {piece&&<img src={getPieceImg(piece.color, piece.type, pieceSet)} alt={piece.type} draggable={false}
+                                        style={{width:'82%',height:'82%',objectFit:'contain',userSelect:'none',pointerEvents:'none',filter:'drop-shadow(0 2px 3px rgba(0,0,0,0.4))'}} />}
                                     {r===7&&<span className="absolute bottom-0.5 right-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}
                                     {c===0&&<span className="absolute top-0.5 left-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}
                                 </div>
@@ -954,15 +967,15 @@ const ChessApp = ({ user }) => {
     const kingPos         = findKing(gameState.board,gameState.turn);
 
     const renderPiece = (piece) => (
-        <span className="chess-piece-3d" style={getPieceStyle(piece.color, pieceStyle)}>
-            {PIECE_SYMBOLS[piece.color][piece.type]}
-        </span>
+        <img src={getPieceImg(piece.color, piece.type, pieceSet)}
+            alt={piece.type} draggable={false}
+            style={{width:'82%',height:'82%',objectFit:'contain',userSelect:'none',pointerEvents:'none',filter:'drop-shadow(0 2px 3px rgba(0,0,0,0.4))'}} />
     );
 
     const renderCaptured = (color) => {
         const order={q:1,r:2,b:3,n:4,p:5};
         const sorted=[...capturedPieces[color]].sort((a,b)=>order[a]-order[b]);
-        return <div className="flex flex-wrap gap-0.5 min-h-[22px]">{sorted.map((p,i)=><span key={i} className="text-base">{PIECE_SYMBOLS[color][p]}</span>)}</div>;
+        return <div className="flex flex-wrap gap-0.5 min-h-[22px] items-center">{sorted.map((p,i)=><img key={i} src={getPieceImg(color,p,pieceSet)} alt={p} draggable={false} style={{width:20,height:20,objectFit:'contain'}} />)}</div>;
     };
 
     const renderBoard = () => {
@@ -1083,7 +1096,7 @@ const ChessApp = ({ user }) => {
                         {/* Sidebar */}
                         <div className="space-y-4">
                             {/* Style Panel */}
-                            <StylePanel boardTheme={boardTheme} setBoardTheme={setBoardTheme} pieceStyle={pieceStyle} setPieceStyle={setPieceStyle} />
+                            <StylePanel boardTheme={boardTheme} setBoardTheme={setBoardTheme} pieceSet={pieceSet} setPieceSet={setPieceSet} />
 
                             {/* Turn indicator */}
                             <div className="rounded-xl p-4 border border-slate-700/50" style={{background:'rgba(30,41,59,0.7)'}}>
@@ -1177,7 +1190,7 @@ const ChessApp = ({ user }) => {
                             }
                         </div>
                         <div className="space-y-4">
-                            <StylePanel boardTheme={boardTheme} setBoardTheme={setBoardTheme} pieceStyle={pieceStyle} setPieceStyle={setPieceStyle} />
+                            <StylePanel boardTheme={boardTheme} setBoardTheme={setBoardTheme} pieceSet={pieceSet} setPieceSet={setPieceSet} />
                             <button onClick={fetchPuzzle} className="w-full px-6 py-3 bg-blue-700 text-white rounded-xl hover:bg-blue-600 font-semibold text-sm">🔄 New Puzzle</button>
                             {puzzleStatus==='playing'&&(
                                 <button onClick={()=>{setPuzzleFeedback('💡 Solution: '+puzzleSolution.join(' → '))}}
@@ -1575,11 +1588,10 @@ const ChessApp = ({ user }) => {
                         <div className="flex gap-3">
                             {['q','r','b','n'].map(p=>(
                                 <button key={p} onClick={()=>handlePromotion(p)}
-                                    className="w-16 h-16 text-4xl rounded-xl flex items-center justify-center border border-slate-600 transition-all hover:scale-105"
+                                    className="w-16 h-16 rounded-xl flex items-center justify-center border border-slate-600 transition-all hover:scale-105"
                                     style={{background:'rgba(51,65,85,0.8)'}}>
-                                    <span className="chess-piece-3d" style={getPieceStyle(gameState.turn,pieceStyle)}>
-                                        {PIECE_SYMBOLS[gameState.turn][p]}
-                                    </span>
+                                    <img src={getPieceImg(gameState.turn, p, pieceSet)} alt={p} draggable={false}
+                                        style={{width:'78%',height:'78%',objectFit:'contain',filter:'drop-shadow(0 2px 3px rgba(0,0,0,0.5))'}} />
                                 </button>
                             ))}
                         </div>
