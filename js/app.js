@@ -8,6 +8,133 @@
 const { useState, useEffect, useCallback, useRef } = React;
 
 /* ══════════════════════════════════
+   ADMIN CONFIG
+   Sirf is email ko admin powers milenge
+══════════════════════════════════ */
+const ADMIN_EMAIL = 'nil000nilesh@gmail.com';
+
+/* ══════════════════════════════════
+   ACCESS DENIED PAGE
+   Jab user whitelist mein nahi hoga
+══════════════════════════════════ */
+const AccessDenied = ({ user }) => (
+    <div className="min-h-screen flex items-center justify-center p-4" style={{background:'radial-gradient(ellipse at top,#0f172a 0%,#020617 70%)'}}>
+        <div className="w-full max-w-sm text-center fade-in">
+            <div className="rounded-3xl p-8 border" style={{background:'rgba(15,23,42,0.92)',borderColor:'rgba(239,68,68,0.25)',boxShadow:'0 0 60px rgba(239,68,68,0.08),0 25px 60px rgba(0,0,0,0.6)'}}>
+                <div className="text-6xl mb-4">🔒</div>
+                <h1 className="chess-title text-2xl font-bold mb-2" style={{color:'#f87171'}}>Access Denied</h1>
+                <p className="text-slate-400 text-sm mb-2">Aapka account abhi approved nahi hai.</p>
+                <p className="text-slate-500 text-xs mb-6">Admin se contact karo access ke liye.</p>
+                <div className="rounded-xl p-3 mb-6 text-xs text-slate-400 font-mono" style={{background:'rgba(30,41,59,0.8)'}}>
+                    {user.email}
+                </div>
+                <button onClick={()=>auth.signOut()}
+                    className="w-full py-3 rounded-xl font-semibold text-sm border border-red-700/40 text-red-400 hover:bg-red-800/20 transition-colors">
+                    🚪 Sign Out
+                </button>
+            </div>
+        </div>
+    </div>
+);
+
+/* ══════════════════════════════════
+   ADMIN PANEL COMPONENT
+   Sirf admin (ADMIN_EMAIL) ko dikhega
+══════════════════════════════════ */
+const AdminPanel = () => {
+    const [users, setUsers]       = useState([]);
+    const [newEmail, setNewEmail] = useState('');
+    const [loading, setLoading]   = useState(true);
+    const [msg, setMsg]           = useState('');
+
+    const showMsg = (m) => { setMsg(m); setTimeout(()=>setMsg(''), 3000); };
+
+    // Firestore se allowed users load karo
+    const loadUsers = async () => {
+        setLoading(true);
+        try {
+            const doc = await db.collection('admin').doc('access').get();
+            if (doc.exists) setUsers(doc.data().allowedEmails || []);
+            else setUsers([]);
+        } catch(e) { showMsg('❌ Load failed: ' + e.message); }
+        setLoading(false);
+    };
+
+    useEffect(() => { loadUsers(); }, []);
+
+    const saveUsers = async (updatedList) => {
+        await db.collection('admin').doc('access').set({ allowedEmails: updatedList });
+        setUsers(updatedList);
+    };
+
+    const addUser = async () => {
+        const email = newEmail.trim().toLowerCase();
+        if (!email || !email.includes('@')) { showMsg('⚠ Valid email daalo'); return; }
+        if (users.includes(email)) { showMsg('⚠ Pehle se hai'); return; }
+        try {
+            await saveUsers([...users, email]);
+            setNewEmail('');
+            showMsg('✅ ' + email + ' add ho gaya');
+        } catch(e) { showMsg('❌ ' + e.message); }
+    };
+
+    const removeUser = async (email) => {
+        try {
+            await saveUsers(users.filter(e => e !== email));
+            showMsg('🗑 ' + email + ' remove ho gaya');
+        } catch(e) { showMsg('❌ ' + e.message); }
+    };
+
+    return (
+        <div className="rounded-2xl p-5 border border-amber-500/30" style={{background:'rgba(120,60,0,0.15)'}}>
+            <h3 className="text-amber-400 font-semibold mb-1 flex items-center gap-2">👑 Admin Panel — User Access</h3>
+            <p className="text-slate-500 text-xs mb-4">Jinhe app use karni hai unka email yahan add karo</p>
+
+            {/* Message */}
+            {msg && <div className="mb-3 p-2 rounded-lg text-xs text-center font-medium" style={{background:'rgba(30,41,59,0.9)',color:msg.startsWith('✅')?'#34d399':msg.startsWith('❌')||msg.startsWith('⚠')?'#f87171':'#fbbf24'}}>{msg}</div>}
+
+            {/* Add user input */}
+            <div className="flex gap-2 mb-4">
+                <input value={newEmail} onChange={e=>setNewEmail(e.target.value)}
+                    onKeyDown={e=>e.key==='Enter'&&addUser()}
+                    placeholder="user@gmail.com"
+                    className="flex-1 px-3 py-2 bg-slate-900 text-white rounded-lg border border-slate-600 focus:border-amber-500 focus:outline-none text-sm" />
+                <button onClick={addUser}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
+                    style={{background:'#d97706'}}>
+                    ➕ Add
+                </button>
+            </div>
+
+            {/* Users list */}
+            {loading ? <p className="text-slate-400 text-sm text-center py-3">Loading…</p> : (
+                <div className="space-y-2">
+                    {users.length === 0
+                        ? <p className="text-slate-500 text-sm text-center py-3">Koi user nahi. Upar email add karo.</p>
+                        : users.map(email => (
+                            <div key={email} className="flex items-center justify-between px-3 py-2 rounded-xl" style={{background:'rgba(30,41,59,0.8)'}}>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-green-400 text-xs">●</span>
+                                    <span className="text-slate-300 text-sm font-mono">{email}</span>
+                                    {email === ADMIN_EMAIL && <span className="text-xs px-2 py-0.5 rounded-full text-amber-300" style={{background:'rgba(217,119,6,0.2)'}}>👑 Admin</span>}
+                                </div>
+                                {email !== ADMIN_EMAIL && (
+                                    <button onClick={()=>removeUser(email)}
+                                        className="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded hover:bg-red-900/30 transition-colors">
+                                        🗑 Remove
+                                    </button>
+                                )}
+                            </div>
+                        ))
+                    }
+                    <p className="text-slate-600 text-xs text-right pt-1">{users.length} user(s) allowed</p>
+                </div>
+            )}
+        </div>
+    );
+};
+
+/* ══════════════════════════════════
    LOGIN PAGE
 ══════════════════════════════════ */
 const LoginPage = () => {
@@ -123,6 +250,8 @@ const SettingsTab = ({ user }) => {
                     <p>• Keys are stored in <code className="text-amber-400 text-xs">Firestore → users/{user.uid.slice(0,8)}…/settings/apiKeys</code></p>
                 </div>
             </div>
+            {/* Admin Panel — sirf admin ko dikhega */}
+            {user.email === ADMIN_EMAIL && <AdminPanel />}
         </div>
     );
 };
@@ -483,14 +612,44 @@ const ChessApp = ({ user }) => {
 };
 
 /* ══════════════════════════════════
-   ROOT APP (Auth Gate)
+   ROOT APP (Auth Gate + Access Check)
 ══════════════════════════════════ */
 const App = () => {
-    const [user,setUser]=useState(null);
-    const [loading,setLoading]=useState(true);
-    useEffect(()=>{ return auth.onAuthStateChanged(u=>{setUser(u);setLoading(false);}); },[]);
-    if (loading) return (<div className="min-h-screen flex items-center justify-center" style={{background:'#020617'}}><div className="text-center"><div className="text-7xl float-animate mb-4">♛</div><p className="text-slate-500 text-sm">Loading ChessGPT Elite…</p></div></div>);
-    return user ? <ChessApp user={user} /> : <LoginPage />;
+    const [user,    setUser]    = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [allowed, setAllowed] = useState(false);
+    const [checking,setChecking]= useState(false);
+
+    useEffect(()=>{ return auth.onAuthStateChanged(u=>{ setUser(u); setLoading(false); }); },[]);
+
+    // Jab user login ho to whitelist check karo
+    useEffect(()=>{
+        if (!user) { setAllowed(false); return; }
+        // Admin hamesha allowed hai
+        if (user.email === ADMIN_EMAIL) { setAllowed(true); return; }
+        // Baaki users ke liye Firestore check
+        setChecking(true);
+        db.collection('admin').doc('access').get()
+            .then(doc=>{
+                const list = doc.exists ? (doc.data().allowedEmails || []) : [];
+                setAllowed(list.includes(user.email.toLowerCase()));
+            })
+            .catch(()=>setAllowed(false))
+            .finally(()=>setChecking(false));
+    },[user]);
+
+    if (loading || checking) return (
+        <div className="min-h-screen flex items-center justify-center" style={{background:'#020617'}}>
+            <div className="text-center">
+                <div className="text-7xl float-animate mb-4">♛</div>
+                <p className="text-slate-500 text-sm">{checking ? 'Checking access…' : 'Loading ChessGPT Elite…'}</p>
+            </div>
+        </div>
+    );
+
+    if (!user) return <LoginPage />;
+    if (!allowed) return <AccessDenied user={user} />;
+    return <ChessApp user={user} />;
 };
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
