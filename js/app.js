@@ -257,6 +257,13 @@ const ChessApp = ({ user }) => {
     const [tournaments,setTournaments]=useState([]);
     const [puzzleActivity,setPuzzleActivity]=useState([]);
     const [lichessMsg,setLichessMsg]=useState('');
+    const [myGames,setMyGames]=useState([]);
+    const [myGamesLoading,setMyGamesLoading]=useState(false);
+    const [myGamesError,setMyGamesError]=useState('');
+    const [selectedImportGame,setSelectedImportGame]=useState(null);
+    const [importGameState,setImportGameState]=useState(null);
+    const [importMoveIdx,setImportMoveIdx]=useState(0);
+    const [importMoves,setImportMoves]=useState([]);
     const abortControllerRef=useRef(null);
 
     useEffect(()=>{
@@ -317,6 +324,64 @@ const ChessApp = ({ user }) => {
         } catch(err) {
             if(err.name !== 'AbortError') showMsg('❌ Stream failed: ' + err.message);
         }
+    };
+
+    // Fetch My Games from Lichess
+    const fetchMyGames = async (maxGames=15) => {
+        if (!lichessToken) { showMsg('❌ Settings mein Lichess token set karo pehle'); return; }
+        const username = myAccount?.id;
+        if (!username) { showMsg('❌ Account load nahi hua, refresh karo'); fetchMyAccount(); return; }
+        setMyGamesLoading(true);
+        setMyGamesError('');
+        setMyGames([]);
+        try {
+            const r = await fetch(`https://lichess.org/api/games/user/${username}?max=${maxGames}&pgnInJson=true&opening=true&clocks=false`, {
+                headers: { 'Authorization': `Bearer ${lichessToken}`, 'Accept': 'application/x-ndjson' }
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status + (r.status===401?' — Token invalid ya expired hai':r.status===429?' — Rate limit, thodi der baad try karo':''));
+            const text = await r.text();
+            const games = parseNDJSON(text);
+            setMyGames(games);
+            if (games.length === 0) setMyGamesError('Koi game nahi mila is account pe.');
+        } catch(e) { setMyGamesError('Games fetch nahi hue: ' + e.message); }
+        setMyGamesLoading(false);
+    };
+
+    // Import game on board for review
+    const importGameForReview = (game) => {
+        const moves = (game.moves || '').trim().split(/\s+/).filter(Boolean);
+        setImportMoves(moves);
+        setImportMoveIdx(0);
+        setImportGameState(parseFEN(INITIAL_FEN));
+        setSelectedImportGame(game);
+        setLichessTab('review');
+        showMsg('✅ Game loaded! ← → se navigate karo');
+    };
+
+    const importGameForward = () => {
+        if (!importGameState || importMoveIdx >= importMoves.length) return;
+        const move = sanToMove(importGameState, importMoves[importMoveIdx]);
+        if (move) { setImportGameState(applyMove(importGameState, move)); setImportMoveIdx(prev=>prev+1); }
+    };
+
+    const importGameBackward = () => {
+        if (importMoveIdx <= 0) return;
+        let state = parseFEN(INITIAL_FEN);
+        for (let i = 0; i < importMoveIdx - 1; i++) {
+            const m = sanToMove(state, importMoves[i]);
+            if (!m) break;
+            state = applyMove(state, m);
+        }
+        setImportGameState(state);
+        setImportMoveIdx(prev=>prev-1);
+    };
+
+    const importGameGotoStart = () => { setImportGameState(parseFEN(INITIAL_FEN)); setImportMoveIdx(0); };
+    const importGameGotoEnd = () => {
+        let state = parseFEN(INITIAL_FEN);
+        for (const san of importMoves) { const m = sanToMove(state, san); if (!m) break; state = applyMove(state, m); }
+        setImportGameState(state);
+        setImportMoveIdx(importMoves.length);
     };
 
     // PGN Helper
@@ -398,6 +463,8 @@ const ChessApp = ({ user }) => {
         </div>
     );};
 
+    const renderImportBoard=()=>{if(!importGameState)return null;const files=['a','b','c','d','e','f','g','h'],t=boardTheme,ps=importGameState;return(<div className="inline-block shadow-2xl rounded-sm overflow-hidden" style={{border:`4px solid ${t.border}`}}>{Array.from({length:8},(_,r)=>(<div key={r} className="flex">{Array.from({length:8},(_,c)=>{const piece=ps.board[r][c],isLight=(r+c)%2===0;let bg=isLight?t.light:t.dark;return(<div key={`${r}-${c}`} className="w-10 h-10 sm:w-14 sm:h-14 md:w-16 md:h-16 flex items-center justify-center select-none relative" style={{backgroundColor:bg}}>{piece&&<img src={getPieceImg(piece.color,piece.type,pieceSet)} alt={piece.type} draggable={false} style={{width:'82%',height:'82%',objectFit:'contain',userSelect:'none',pointerEvents:'none',filter:'drop-shadow(0 2px 3px rgba(0,0,0,0.4))'}} />}{r===7&&<span className="absolute bottom-0.5 right-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}{c===0&&<span className="absolute top-0.5 left-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}</div>);})}</div>))}</div>);};
+
     const renderMoveHistory=()=>{const pairs=[];for(let i=0;i<moveHistory.length;i+=2)pairs.push({num:Math.floor(i/2)+1,w:moveHistory[i],b:moveHistory[i+1]||''});return(<div className="max-h-64 overflow-y-auto space-y-1 text-sm font-mono">{pairs.length===0?<p className="text-slate-500 text-center italic text-xs py-4">Make a move…</p>:pairs.map(p=><div key={p.num} className="flex text-slate-300 py-1.5 px-2 rounded hover:bg-slate-700/50 border-b border-slate-700/30"><span className="text-slate-500 w-10">{p.num}.</span><span className="w-20 font-semibold">{p.w}</span><span className="w-20 font-semibold">{p.b}</span></div>)}</div>);};
 
     // Tabs definition
@@ -406,7 +473,8 @@ const ChessApp = ({ user }) => {
         {id:"puzzles", icon:"🧩", label:"Puzzles"},
         {id:"games", icon:"🎮", label:"Player Analysis"},
         {id:"lichess", icon:"♞", label:"Lichess API"},
-        ...(user.email===ADMIN_EMAIL ? [{id:"users", icon:"👥", label:"Users"}, {id:"settings", icon:"⚙️", label:"Settings"}] : [])
+        ...(user.email===ADMIN_EMAIL ? [{id:"users", icon:"👥", label:"Users"}] : []),
+        {id:"settings", icon:"⚙️", label:"Settings"}
     ];
 
     return (
@@ -498,27 +566,170 @@ const ChessApp = ({ user }) => {
                     {activeTab === 'games' && <div className="fade-in w-full max-w-4xl"><h2 className="text-2xl font-bold text-amber-400 mb-6 border-b border-slate-800 pb-2">👤 Player Analysis</h2><div className="p-6 bg-slate-800/50 rounded-xl border border-slate-700"><p className="text-slate-300">Player lookup interface here.</p></div></div>}
                     
                     {activeTab === 'lichess' && (
-                        <div className="fade-in w-full max-w-4xl">
-                            <h2 className="text-2xl font-bold text-amber-400 mb-4 border-b border-slate-800 pb-2">♞ Lichess Integrations</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="p-5 bg-slate-800/50 rounded-xl border border-slate-700">
-                                    <h3 className="text-white font-bold mb-3">Active Games</h3>
-                                    <button onClick={fetchBoardGames} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm mb-3">Refresh List</button>
-                                    {boardGames.length === 0 ? <p className="text-slate-500 text-sm">Koi live game nahi hai.</p> : boardGames.map(g => (
-                                        <div key={g.gameId} className="flex justify-between items-center p-2 bg-slate-900 rounded mb-2 border border-slate-700">
-                                            <span className="text-sm font-medium">{g.opponent?.username || 'Unknown'}</span>
-                                            <button onClick={()=>streamBoardGame(g.gameId)} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">Stream API</button>
+                        <div className="fade-in w-full max-w-5xl">
+                            <h2 className="text-2xl font-bold text-amber-400 mb-4 border-b border-slate-800 pb-2">♞ Lichess Integration</h2>
+
+                            {/* Sub-tabs */}
+                            <div className="flex gap-2 mb-5 overflow-x-auto">
+                                {[{id:'mygames',label:'📥 My Games'},  {id:'account',label:'👤 Account'}, {id:'live',label:'📡 Live Games'}].map(st=>(
+                                    <button key={st.id} onClick={()=>{ setLichessTab(st.id); if(st.id==='mygames'&&myGames.length===0&&!myGamesLoading) fetchMyGames(); if(st.id==='live') fetchBoardGames(); }} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${lichessTab===st.id?'bg-amber-600 text-white':'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>{st.label}</button>
+                                ))}
+                                {selectedImportGame && <button onClick={()=>setLichessTab('review')} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${lichessTab==='review'?'bg-green-700 text-white':'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>🔍 Review Game</button>}
+                            </div>
+
+                            {lichessMsg && <div className="mb-3 p-2 bg-slate-800 border border-slate-700 rounded text-xs text-amber-400">{lichessMsg}</div>}
+
+                            {/* MY GAMES TAB */}
+                            {lichessTab === 'mygames' && (
+                                <div>
+                                    {!lichessToken && (
+                                        <div className="p-5 bg-red-900/20 border border-red-700/50 rounded-xl text-center">
+                                            <p className="text-red-400 font-semibold mb-2">⚠ Lichess Token Set Nahi Hai</p>
+                                            <p className="text-slate-400 text-sm mb-3">Settings tab mein jaake Lichess API token save karo.</p>
+                                            <button onClick={()=>setActiveTab('settings')} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-bold">⚙️ Settings Kholo</button>
                                         </div>
-                                    ))}
+                                    )}
+                                    {lichessToken && (
+                                        <>
+                                            <div className="flex gap-3 mb-4 flex-wrap items-center">
+                                                <button onClick={()=>fetchMyGames(15)} disabled={myGamesLoading} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold">
+                                                    {myGamesLoading ? '⏳ Loading…' : '🔄 Load My Games (15)'}
+                                                </button>
+                                                <button onClick={()=>fetchMyGames(50)} disabled={myGamesLoading} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold">
+                                                    Load 50 Games
+                                                </button>
+                                                {myAccount && <span className="text-slate-400 text-sm">Account: <span className="text-white font-bold">{myAccount.id}</span></span>}
+                                            </div>
+                                            {myGamesError && <div className="p-3 bg-red-900/30 border border-red-700 rounded-lg text-red-400 text-sm mb-4">{myGamesError}</div>}
+                                            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                                                {myGames.map((g,i) => {
+                                                    const isWin = g.winner && ((g.winner==='white'&&g.players?.white?.user?.id===myAccount?.id)||(g.winner==='black'&&g.players?.black?.user?.id===myAccount?.id));
+                                                    const isLoss = g.winner && !isWin;
+                                                    const isDraw = !g.winner && g.status !== 'aborted';
+                                                    const myColor = g.players?.white?.user?.id === myAccount?.id ? 'white' : 'black';
+                                                    const opp = myColor==='white' ? g.players?.black?.user?.name : g.players?.white?.user?.name;
+                                                    const result = g.winner ? (isWin ? '✅ Win' : '❌ Loss') : (isDraw ? '½ Draw' : '—');
+                                                    const resultColor = isWin ? 'text-green-400' : isLoss ? 'text-red-400' : 'text-slate-400';
+                                                    return (
+                                                        <div key={g.id||i} className="flex items-center justify-between p-3 bg-slate-800/70 border border-slate-700 rounded-lg hover:border-amber-500/50 transition-all">
+                                                            <div className="flex items-center gap-3 min-w-0">
+                                                                <span className={`text-sm font-bold w-16 shrink-0 ${resultColor}`}>{result}</span>
+                                                                <div className="min-w-0">
+                                                                    <p className="text-white text-sm font-medium truncate">vs {opp || 'Anonymous'}</p>
+                                                                    <p className="text-slate-500 text-xs">{g.perf} · {myColor} · {g.moves?.split(' ').length||0} moves</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex gap-2 shrink-0">
+                                                                {g.moves && <button onClick={()=>importGameForReview(g)} className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-bold">🔍 Review</button>}
+                                                                <a href={`https://lichess.org/${g.id}`} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs font-semibold">Lichess ↗</a>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {myGames.length === 0 && !myGamesLoading && !myGamesError && <p className="text-slate-500 text-sm text-center py-8">Games load karne ke liye upar button dabao.</p>}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
-                                <div className="p-5 bg-slate-800/50 rounded-xl border border-slate-700 h-64 overflow-y-auto">
-                                    <h3 className="text-white font-bold mb-3 text-green-400">📡 Live API Stream</h3>
-                                    {lichessMsg && <p className="text-xs text-amber-400 mb-2">{lichessMsg}</p>}
-                                    <div className="text-xs font-mono text-slate-400 space-y-1">
-                                        {gameEvents.map((e,i) => <div key={i}>&gt; {JSON.stringify(e)}</div>)}
+                            )}
+
+                            {/* GAME REVIEW TAB */}
+                            {lichessTab === 'review' && selectedImportGame && (
+                                <div className="flex flex-col lg:flex-row gap-5 items-start">
+                                    <div className="flex flex-col items-center">
+                                        <div className="mb-3 text-sm text-slate-400 font-medium">
+                                            Move <span className="text-white font-bold">{importMoveIdx}</span> / {importMoves.length}
+                                        </div>
+                                        {renderImportBoard()}
+                                        {/* Navigation Controls */}
+                                        <div className="flex gap-2 mt-4">
+                                            <button onClick={importGameGotoStart} title="Start" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">⏮</button>
+                                            <button onClick={importGameBackward} title="Prev" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">◀</button>
+                                            <button onClick={importGameForward} title="Next" className="w-10 h-10 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold flex items-center justify-center">▶</button>
+                                            <button onClick={importGameGotoEnd} title="End" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">⏭</button>
+                                        </div>
+                                    </div>
+                                    {/* Game Info Panel */}
+                                    <div className="flex-1 min-w-0 space-y-3">
+                                        <div className="p-4 bg-slate-800/70 border border-slate-700 rounded-xl">
+                                            <p className="text-amber-400 font-bold mb-3 text-sm">Game Info</p>
+                                            <div className="space-y-1 text-sm">
+                                                <p className="text-slate-300">White: <span className="text-white font-semibold">{selectedImportGame.players?.white?.user?.name || 'Anonymous'}</span> ({selectedImportGame.players?.white?.rating || '?'})</p>
+                                                <p className="text-slate-300">Black: <span className="text-white font-semibold">{selectedImportGame.players?.black?.user?.name || 'Anonymous'}</span> ({selectedImportGame.players?.black?.rating || '?'})</p>
+                                                <p className="text-slate-300">Result: <span className="text-white font-semibold">{selectedImportGame.winner ? selectedImportGame.winner + ' wins' : selectedImportGame.status}</span></p>
+                                                <p className="text-slate-300">Variant: <span className="text-white font-semibold">{selectedImportGame.perf}</span></p>
+                                                {selectedImportGame.opening && <p className="text-slate-300">Opening: <span className="text-white font-semibold">{selectedImportGame.opening.name}</span></p>}
+                                            </div>
+                                        </div>
+                                        {/* Move List */}
+                                        <div className="p-4 bg-slate-800/70 border border-slate-700 rounded-xl max-h-60 overflow-y-auto">
+                                            <p className="text-amber-400 font-bold mb-3 text-sm">Moves</p>
+                                            <div className="text-xs font-mono text-slate-300 flex flex-wrap gap-1">
+                                                {importMoves.map((m,i)=>(
+                                                    <span key={i} onClick={()=>{
+                                                        let state=parseFEN(INITIAL_FEN);
+                                                        for(let j=0;j<=i;j++){const mv=sanToMove(state,importMoves[j]);if(!mv)break;state=applyMove(state,mv);}
+                                                        setImportGameState(state);setImportMoveIdx(i+1);
+                                                    }} className={`cursor-pointer px-1.5 py-0.5 rounded transition-all ${importMoveIdx===i+1?'bg-amber-600 text-white':'hover:bg-slate-700'}`}>
+                                                        {i%2===0?`${Math.floor(i/2)+1}. `:''}
+                                                        {m}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <button onClick={()=>setLichessTab('mygames')} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-semibold">← Back to Games</button>
                                     </div>
                                 </div>
-                            </div>
+                            )}
+
+                            {/* ACCOUNT TAB */}
+                            {lichessTab === 'account' && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-5 bg-slate-800/50 rounded-xl border border-slate-700">
+                                        <h3 className="text-white font-bold mb-3">👤 Account Info</h3>
+                                        {myAccount ? (
+                                            <div className="space-y-2 text-sm">
+                                                <p className="text-slate-300">Username: <span className="text-white font-bold">{myAccount.id}</span></p>
+                                                <p className="text-slate-300">Name: {myAccount.profile?.realName || '—'}</p>
+                                                <p className="text-slate-300">Rating: Bullet {myAccount.perfs?.bullet?.rating||'?'} · Blitz {myAccount.perfs?.blitz?.rating||'?'} · Rapid {myAccount.perfs?.rapid?.rating||'?'}</p>
+                                            </div>
+                                        ) : (
+                                            <div>
+                                                {!lichessToken ? <p className="text-red-400 text-sm">Token set nahi hai. Settings mein jaao.</p> : <p className="text-slate-400 text-sm">Account load ho raha hai…</p>}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="p-5 bg-slate-800/50 rounded-xl border border-slate-700">
+                                        <h3 className="text-white font-bold mb-3">🚀 Quick Actions</h3>
+                                        <div className="space-y-2">
+                                            <button onClick={()=>{ setLichessTab('mygames'); fetchMyGames(15); }} className="w-full py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-bold">📥 My Games Import Karo</button>
+                                            <button onClick={fetchMyAccount} className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-semibold">🔄 Account Refresh</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* LIVE GAMES TAB */}
+                            {lichessTab === 'live' && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-5 bg-slate-800/50 rounded-xl border border-slate-700">
+                                        <h3 className="text-white font-bold mb-3">Active Games</h3>
+                                        <button onClick={fetchBoardGames} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm mb-3">Refresh List</button>
+                                        {boardGames.length === 0 ? <p className="text-slate-500 text-sm">Koi live game nahi hai.</p> : boardGames.map(g => (
+                                            <div key={g.gameId} className="flex justify-between items-center p-2 bg-slate-900 rounded mb-2 border border-slate-700">
+                                                <span className="text-sm font-medium">{g.opponent?.username || 'Unknown'}</span>
+                                                <button onClick={()=>streamBoardGame(g.gameId)} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">Stream</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="p-5 bg-slate-800/50 rounded-xl border border-slate-700 h-64 overflow-y-auto">
+                                        <h3 className="text-white font-bold mb-3 text-green-400">📡 Live Stream</h3>
+                                        <div className="text-xs font-mono text-slate-400 space-y-1">
+                                            {gameEvents.map((e,i) => <div key={i}>&gt; {JSON.stringify(e)}</div>)}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
