@@ -28,6 +28,11 @@ const BOARD_THEMES = [
 
 const PIECE_CDN = 'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/';
 
+const PIECE_UNICODE = {
+    w: { k: '♔', q: '♕', r: '♖', b: '♗', n: '♘', p: '♙' },
+    b: { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' }
+};
+
 const PIECE_SETS = [
     {id:'cburnett',   name:'Cburnett',   cat:'♞ Lichess'},
     {id:'merida',     name:'Merida',     cat:'♞ Lichess'},
