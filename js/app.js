@@ -5,7 +5,7 @@
    New feature add karna → yahan
 ═══════════════════════════════════════════ */
 
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
 /* ══════════════════════════════════
    ADMIN CONFIG
@@ -219,6 +219,199 @@ const StylePanel = ({ boardTheme, setBoardTheme, pieceSet, setPieceSet }) => {
                     </button>
                 ))}
             </div>
+        </div>
+    );
+};
+
+/* ══════════════════════════════════
+   useChessAnalysis — Custom Hook
+   Manages a single analysis request
+   via the global chessAnalyzer instance
+══════════════════════════════════ */
+const useChessAnalysis = (options = {}) => {
+    const [analysis, setAnalysis] = useState(null);
+    const [loading,  setLoading]  = useState(false);
+    const [error,    setError]    = useState(null);
+
+    const analyze = useCallback(async (fen, opts = {}) => {
+        if (!fen || !AnalysisHelpers.isValidFEN(fen)) return;
+        setLoading(true);
+        setError(null);
+        try {
+            const merged = Object.assign({ depth: 16, maxThinkingTime: 50 }, options, opts);
+            const result = await chessAnalyzer.analyzeFEN(fen, merged);
+            setAnalysis(result);
+        } catch (e) {
+            setError(e.message);
+        }
+        setLoading(false);
+    }, []);
+
+    const reset = useCallback(() => { setAnalysis(null); setError(null); }, []);
+
+    return { analysis, loading, error, analyze, reset };
+};
+
+/* ══════════════════════════════════
+   PuzzleAnalysisPanel
+   Lichess-style engine analysis panel:
+   eval bar · best move · continuation
+   top moves · puzzle feedback display
+══════════════════════════════════ */
+const PuzzleAnalysisPanel = ({ fen, puzzleStatus, puzzleFeedback }) => {
+    const [analysis,  setAnalysis]  = useState(null);
+    const [topMoves,  setTopMoves]  = useState([]);
+    const [loading,   setLoading]   = useState(false);
+    const [error,     setError]     = useState(null);
+    const debounceRef = useRef(null);
+
+    useEffect(() => {
+        if (!fen || !AnalysisHelpers.isValidFEN(fen)) return;
+        if (puzzleStatus === 'idle' || puzzleStatus === 'loading' || puzzleStatus === 'error') return;
+
+        // Debounce 600 ms to avoid hammering API on rapid state changes
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                // variants=3 → ask for top-3 candidate moves
+                const result = await chessAnalyzer.analyzeFEN(fen, { variants: 3, depth: 16, maxThinkingTime: 50 });
+                if (Array.isArray(result)) {
+                    setAnalysis(result[0]);
+                    setTopMoves(result);
+                } else {
+                    setAnalysis(result);
+                    setTopMoves([result]);
+                }
+            } catch (e) {
+                setError('Engine unavailable: ' + e.message);
+            }
+            setLoading(false);
+        }, 600);
+
+        return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    }, [fen, puzzleStatus]);
+
+    if (puzzleStatus === 'idle' || puzzleStatus === 'error') return null;
+
+    const barPct      = analysis ? AnalysisHelpers.evalToBarPercent(analysis.eval, analysis.winChance) : 50;
+    const evalText    = analysis ? AnalysisHelpers.formatEval(analysis.eval, analysis.mate) : '—';
+    const evalColor   = analysis ? AnalysisHelpers.evalColor(analysis.eval) : '#94a3b8';
+    const continuation = analysis ? AnalysisHelpers.formatContinuation(analysis.continuationArr) : '';
+
+    return (
+        <div className="rounded-xl border border-slate-700/50 bg-slate-800/80 overflow-hidden">
+
+            {/* Header */}
+            <div className="px-3 py-2 bg-[#302e2b] border-b border-slate-700 flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">⚡ Engine Analysis</span>
+                <span className="text-xs text-slate-500">
+                    {loading ? <span className="animate-pulse text-amber-500/70">Analyzing…</span>
+                             : analysis ? `Depth ${analysis.depth || 16}` : ''}
+                </span>
+            </div>
+
+            <div className="p-3 space-y-3">
+
+                {/* ── Eval Bar ── */}
+                <div>
+                    <div className="flex justify-between text-xs mb-1.5 font-semibold">
+                        <span className="text-slate-200">White</span>
+                        <span className="font-mono" style={{ color: evalColor }}>{evalText}</span>
+                        <span className="text-slate-400">Black</span>
+                    </div>
+                    <div className="w-full h-4 rounded overflow-hidden flex" style={{ background: '#1e1e1e' }}>
+                        {loading && !analysis ? (
+                            <div className="w-full h-full bg-slate-700 animate-pulse rounded" />
+                        ) : (
+                            <>
+                                <div className="h-full bg-white transition-all duration-500" style={{ width: `${barPct}%` }} />
+                                <div className="h-full bg-[#1a1a1a] transition-all duration-500" style={{ width: `${100 - barPct}%` }} />
+                            </>
+                        )}
+                    </div>
+                    {analysis?.winChance != null && (
+                        <div className="flex justify-between text-xs mt-1 text-slate-500 font-mono">
+                            <span>{Math.round(barPct)}%</span>
+                            <span>{Math.round(100 - barPct)}%</span>
+                        </div>
+                    )}
+                </div>
+
+                {/* ── Best Move ── */}
+                {(analysis?.san || analysis?.move) && (
+                    <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-700/60 border border-slate-600/40">
+                        <span className="text-xs text-slate-400">Best Move</span>
+                        <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-amber-300 text-sm">{analysis.san || analysis.move}</span>
+                            {analysis.isCapture && <span className="text-xs text-slate-500">×</span>}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Continuation Line ── */}
+                {continuation && (
+                    <div className="px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700/30">
+                        <p className="text-xs text-slate-500 mb-1">Continuation</p>
+                        <p className="text-xs font-mono text-slate-300 leading-relaxed break-all">{continuation}</p>
+                    </div>
+                )}
+
+                {/* ── Top Moves (when variants returned multiple) ── */}
+                {topMoves.length > 1 && (
+                    <div>
+                        <p className="text-xs text-slate-500 mb-2 uppercase tracking-wider">Top Moves</p>
+                        <div className="space-y-1.5">
+                            {topMoves.slice(0, 3).map((m, i) => {
+                                const movePct = AnalysisHelpers.evalToBarPercent(m.eval, m.winChance);
+                                return (
+                                    <div key={i} className="flex items-center gap-2 text-xs">
+                                        <span className="text-slate-600 w-3 font-mono">{i + 1}</span>
+                                        <span className="font-mono font-bold text-white w-10">{m.san || m.move || '—'}</span>
+                                        <div className="flex-1 h-1.5 rounded-full bg-slate-700/80 overflow-hidden">
+                                            <div className="h-full rounded-full bg-amber-500/60 transition-all"
+                                                 style={{ width: `${Math.max(8, movePct)}%` }} />
+                                        </div>
+                                        <span className="font-mono text-slate-400 w-12 text-right">
+                                            {AnalysisHelpers.formatEval(m.eval)}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Error ── */}
+                {error && (
+                    <div className="px-3 py-2 rounded-lg bg-red-900/20 border border-red-800/40 text-xs text-red-400">
+                        {error}
+                    </div>
+                )}
+
+                {/* ── Skeleton while loading with no prior result ── */}
+                {loading && !analysis && (
+                    <div className="space-y-2 animate-pulse">
+                        <div className="h-2.5 bg-slate-700 rounded w-2/3" />
+                        <div className="h-2.5 bg-slate-700 rounded w-1/2" />
+                    </div>
+                )}
+
+            </div>
+
+            {/* ── Puzzle Feedback (shown inside panel when set) ── */}
+            {puzzleFeedback && (
+                <div className={`mx-3 mb-3 px-3 py-2 rounded-lg text-xs font-bold text-center border ${
+                    puzzleFeedback.startsWith('✅')
+                        ? 'text-green-400 bg-green-900/20 border-green-800/50'
+                        : puzzleFeedback.startsWith('❌')
+                            ? 'text-red-400 bg-red-900/20 border-red-800/50'
+                            : 'text-blue-300 bg-blue-900/20 border-blue-800/50'
+                }`}>
+                    {puzzleFeedback}
+                </div>
+            )}
         </div>
     );
 };
@@ -557,7 +750,6 @@ const ChessApp = ({ user }) => {
                                         {puzzleGameState.turn===WHITE?'⬜ White To Move':'⬛ Black To Move'}
                                     </div>
                                     {renderPuzzleBoard()}
-                                    {puzzleFeedback && <div className={`w-full max-w-md mt-4 p-3 rounded-lg text-sm font-bold text-center ${puzzleFeedback.startsWith('✅')?'text-green-400 bg-green-900/30 border border-green-800':'text-red-400 bg-red-900/30 border border-red-800'}`}>{puzzleFeedback}</div>}
                                 </>
                             )}
                         </div>
@@ -767,12 +959,22 @@ const ChessApp = ({ user }) => {
                              {activeTab === 'puzzles' && (
                                  <>
                                     <StylePanel boardTheme={boardTheme} setBoardTheme={setBoardTheme} pieceSet={pieceSet} setPieceSet={setPieceSet} />
+
+                                    {/* Engine Analysis Panel */}
+                                    <PuzzleAnalysisPanel
+                                        fen={stateToFEN(puzzleGameState)}
+                                        puzzleStatus={puzzleStatus}
+                                        puzzleFeedback={puzzleFeedback}
+                                    />
+
                                     {currentPuzzle && (
-                                        <div className="p-4 rounded-lg border border-amber-500/30 bg-amber-900/10">
-                                            <p className="text-amber-400 font-bold text-sm mb-2 border-b border-amber-500/30 pb-1">Puzzle Details</p>
+                                        <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-900/10">
+                                            <p className="text-amber-400 font-bold text-xs mb-2 border-b border-amber-500/20 pb-1 uppercase tracking-wider">Puzzle Details</p>
                                             <p className="text-slate-300 text-xs mb-1">Themes: <span className="font-semibold text-white">{currentPuzzle.themes?.join(', ')||'None'}</span></p>
-                                            <p className="text-slate-400 text-xs">Rating: {currentPuzzle.rating}</p>
-                                            <p className="text-slate-400 text-xs mt-3 bg-slate-800/50 p-2 rounded text-center">Move {Math.min(puzzleMoveIdx+1,puzzleSolution.length)} of {puzzleSolution.length}</p>
+                                            <p className="text-slate-400 text-xs">Rating: <span className="text-white font-semibold">{currentPuzzle.rating}</span></p>
+                                            <p className="text-slate-500 text-xs mt-2 bg-slate-800/50 p-1.5 rounded text-center font-mono">
+                                                Move {Math.min(puzzleMoveIdx+1,puzzleSolution.length)} / {puzzleSolution.length}
+                                            </p>
                                         </div>
                                     )}
                                  </>
