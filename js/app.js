@@ -453,6 +453,7 @@ const ChessApp = ({ user }) => {
     const [myGames,setMyGames]=useState([]);
     const [myGamesLoading,setMyGamesLoading]=useState(false);
     const [myGamesError,setMyGamesError]=useState('');
+    const [myGamesLastUpdated,setMyGamesLastUpdated]=useState(null);
     const [selectedImportGame,setSelectedImportGame]=useState(null);
     const [importGameState,setImportGameState]=useState(null);
     const [importMoveIdx,setImportMoveIdx]=useState(0);
@@ -535,6 +536,7 @@ const ChessApp = ({ user }) => {
             const text = await r.text();
             const games = parseNDJSON(text);
             setMyGames(games);
+            setMyGamesLastUpdated(new Date());
             if (games.length === 0) setMyGamesError('Koi game nahi mila is account pe.');
         } catch(e) { setMyGamesError('Games fetch nahi hue: ' + e.message); }
         setMyGamesLoading(false);
@@ -547,8 +549,8 @@ const ChessApp = ({ user }) => {
         setImportMoveIdx(0);
         setImportGameState(parseFEN(INITIAL_FEN));
         setSelectedImportGame(game);
-        setLichessTab('review');
-        showMsg('✅ Game loaded! ← → se navigate karo');
+        setLichessTab('analysis');
+        showMsg('✅ Game loaded! Analysis tab mein dekho');
     };
 
     const importGameForward = () => {
@@ -762,11 +764,23 @@ const ChessApp = ({ user }) => {
                             <h2 className="text-2xl font-bold text-amber-400 mb-4 border-b border-slate-800 pb-2">♞ Lichess Integration</h2>
 
                             {/* Sub-tabs */}
-                            <div className="flex gap-2 mb-5 overflow-x-auto">
-                                {[{id:'mygames',label:'📥 My Games'},  {id:'account',label:'👤 Account'}, {id:'live',label:'📡 Live Games'}].map(st=>(
-                                    <button key={st.id} onClick={()=>{ setLichessTab(st.id); if(st.id==='mygames'&&myGames.length===0&&!myGamesLoading) fetchMyGames(); if(st.id==='live') fetchBoardGames(); }} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${lichessTab===st.id?'bg-amber-600 text-white':'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>{st.label}</button>
+                            <div className="flex gap-2 mb-5 overflow-x-auto pb-1">
+                                {[
+                                    {id:'mygames',  label:'📥 My Games'},
+                                    {id:'analysis', label:'🔬 Game Analysis'},
+                                    {id:'account',  label:'👤 Account'},
+                                    {id:'live',     label:'📡 Live'}
+                                ].map(st=>(
+                                    <button key={st.id} onClick={()=>{
+                                        setLichessTab(st.id);
+                                        if(st.id==='mygames'&&myGames.length===0&&!myGamesLoading) fetchMyGames();
+                                        if(st.id==='live') fetchBoardGames();
+                                    }} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${
+                                        lichessTab===st.id
+                                            ? (st.id==='analysis' ? 'bg-blue-700 text-white' : 'bg-amber-600 text-white')
+                                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                    }`}>{st.label}</button>
                                 ))}
-                                {selectedImportGame && <button onClick={()=>setLichessTab('review')} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${lichessTab==='review'?'bg-green-700 text-white':'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>🔍 Review Game</button>}
                             </div>
 
                             {lichessMsg && <div className="mb-3 p-2 bg-slate-800 border border-slate-700 rounded text-xs text-amber-400">{lichessMsg}</div>}
@@ -783,17 +797,33 @@ const ChessApp = ({ user }) => {
                                     )}
                                     {lichessToken && (
                                         <>
-                                            <div className="flex gap-3 mb-4 flex-wrap items-center">
-                                                <button onClick={()=>fetchMyGames(15)} disabled={myGamesLoading} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold">
-                                                    {myGamesLoading ? '⏳ Loading…' : '🔄 Load My Games (15)'}
-                                                </button>
-                                                <button onClick={()=>fetchMyGames(50)} disabled={myGamesLoading} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold">
-                                                    Load 50 Games
-                                                </button>
-                                                {myAccount && <span className="text-slate-400 text-sm">Account: <span className="text-white font-bold">{myAccount.id}</span></span>}
+                                            {/* Toolbar */}
+                                            <div className="flex gap-2 mb-4 flex-wrap items-center justify-between">
+                                                <div className="flex gap-2 flex-wrap items-center">
+                                                    <button onClick={()=>fetchMyGames(20)} disabled={myGamesLoading} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold transition-all">
+                                                        {myGamesLoading ? '⏳ Loading…' : '🔄 Latest 20 Games'}
+                                                    </button>
+                                                    <button onClick={()=>fetchMyGames(50)} disabled={myGamesLoading} className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition-all">
+                                                        Load 50
+                                                    </button>
+                                                    <button onClick={()=>fetchMyGames(100)} disabled={myGamesLoading} className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition-all">
+                                                        Load 100
+                                                    </button>
+                                                </div>
+                                                <div className="flex items-center gap-3 text-xs text-slate-500">
+                                                    {myAccount && <span>👤 <span className="text-white font-semibold">{myAccount.id}</span></span>}
+                                                    {myGamesLastUpdated && (
+                                                        <span className="text-slate-600">
+                                                            Updated {myGamesLastUpdated.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+                                                        </span>
+                                                    )}
+                                                    {myGames.length > 0 && <span className="text-slate-500">{myGames.length} games</span>}
+                                                </div>
                                             </div>
+
                                             {myGamesError && <div className="p-3 bg-red-900/30 border border-red-700 rounded-lg text-red-400 text-sm mb-4">{myGamesError}</div>}
-                                            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+
+                                            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
                                                 {myGames.map((g,i) => {
                                                     const isWin = g.winner && ((g.winner==='white'&&g.players?.white?.user?.id===myAccount?.id)||(g.winner==='black'&&g.players?.black?.user?.id===myAccount?.id));
                                                     const isLoss = g.winner && !isWin;
@@ -802,76 +832,122 @@ const ChessApp = ({ user }) => {
                                                     const opp = myColor==='white' ? g.players?.black?.user?.name : g.players?.white?.user?.name;
                                                     const result = g.winner ? (isWin ? '✅ Win' : '❌ Loss') : (isDraw ? '½ Draw' : '—');
                                                     const resultColor = isWin ? 'text-green-400' : isLoss ? 'text-red-400' : 'text-slate-400';
+                                                    const isSelected = selectedImportGame?.id === g.id;
                                                     return (
-                                                        <div key={g.id||i} className="flex items-center justify-between p-3 bg-slate-800/70 border border-slate-700 rounded-lg hover:border-amber-500/50 transition-all">
+                                                        <div key={g.id||i} className={`flex items-center justify-between p-3 rounded-lg border transition-all ${isSelected ? 'border-blue-500/60 bg-blue-900/20' : 'border-slate-700 bg-slate-800/70 hover:border-amber-500/50'}`}>
                                                             <div className="flex items-center gap-3 min-w-0">
-                                                                <span className={`text-sm font-bold w-16 shrink-0 ${resultColor}`}>{result}</span>
+                                                                <span className={`text-sm font-bold w-14 shrink-0 ${resultColor}`}>{result}</span>
                                                                 <div className="min-w-0">
-                                                                    <p className="text-white text-sm font-medium truncate">vs {opp || 'Anonymous'}</p>
+                                                                    <p className="text-white text-sm font-medium truncate">vs <span className="font-bold">{opp || 'Anonymous'}</span></p>
                                                                     <p className="text-slate-500 text-xs">{g.perf} · {myColor} · {g.moves?.split(' ').length||0} moves</p>
                                                                 </div>
                                                             </div>
-                                                            <div className="flex gap-2 shrink-0">
-                                                                {g.moves && <button onClick={()=>importGameForReview(g)} className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-bold">🔍 Review</button>}
-                                                                <a href={`https://lichess.org/${g.id}`} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs font-semibold">Lichess ↗</a>
+                                                            <div className="flex gap-1.5 shrink-0">
+                                                                {g.moves && (
+                                                                    <button onClick={()=>importGameForReview(g)}
+                                                                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${isSelected ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}>
+                                                                        {isSelected ? '🔬 Analyzing' : '🔬 Analyze'}
+                                                                    </button>
+                                                                )}
+                                                                <a href={`https://lichess.org/${g.id}`} target="_blank" rel="noopener noreferrer"
+                                                                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs font-semibold transition-all">↗</a>
                                                             </div>
                                                         </div>
                                                     );
                                                 })}
-                                                {myGames.length === 0 && !myGamesLoading && !myGamesError && <p className="text-slate-500 text-sm text-center py-8">Games load karne ke liye upar button dabao.</p>}
+                                                {myGames.length === 0 && !myGamesLoading && !myGamesError && (
+                                                    <div className="text-center py-12">
+                                                        <div className="text-4xl mb-3 opacity-40">♟</div>
+                                                        <p className="text-slate-500 text-sm">Latest games load karne ke liye upar button dabao.</p>
+                                                    </div>
+                                                )}
                                             </div>
                                         </>
                                     )}
                                 </div>
                             )}
 
-                            {/* GAME REVIEW TAB */}
-                            {lichessTab === 'review' && selectedImportGame && (
-                                <div className="flex flex-col lg:flex-row gap-5 items-start">
-                                    <div className="flex flex-col items-center">
-                                        <div className="mb-3 text-sm text-slate-400 font-medium">
-                                            Move <span className="text-white font-bold">{importMoveIdx}</span> / {importMoves.length}
+                            {/* GAME ANALYSIS TAB */}
+                            {lichessTab === 'analysis' && (
+                                selectedImportGame ? (
+                                    <div className="flex flex-col lg:flex-row gap-5 items-start">
+                                        {/* Board + Controls */}
+                                        <div className="flex flex-col items-center shrink-0">
+                                            <div className="mb-2 text-xs text-slate-400 font-medium font-mono bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-700">
+                                                Move <span className="text-white font-bold">{importMoveIdx}</span> / {importMoves.length}
+                                                <span className="ml-3 text-slate-500">{importGameState ? AnalysisHelpers.sideFromFEN(stateToFEN(importGameState)) + ' to move' : ''}</span>
+                                            </div>
+                                            {renderImportBoard()}
+                                            <div className="flex gap-2 mt-3">
+                                                <button onClick={importGameGotoStart} title="Start" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center text-sm">⏮</button>
+                                                <button onClick={importGameBackward} title="Prev" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">◀</button>
+                                                <button onClick={importGameForward} title="Next" className="w-10 h-10 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold flex items-center justify-center">▶</button>
+                                                <button onClick={importGameGotoEnd} title="End" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center text-sm">⏭</button>
+                                            </div>
+                                            <button onClick={()=>setLichessTab('mygames')} className="mt-3 px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 transition-all">← Change Game</button>
                                         </div>
-                                        {renderImportBoard()}
-                                        {/* Navigation Controls */}
-                                        <div className="flex gap-2 mt-4">
-                                            <button onClick={importGameGotoStart} title="Start" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">⏮</button>
-                                            <button onClick={importGameBackward} title="Prev" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">◀</button>
-                                            <button onClick={importGameForward} title="Next" className="w-10 h-10 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold flex items-center justify-center">▶</button>
-                                            <button onClick={importGameGotoEnd} title="End" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">⏭</button>
+
+                                        {/* Right Panel */}
+                                        <div className="flex-1 min-w-0 space-y-3">
+
+                                            {/* Engine Analysis */}
+                                            <PuzzleAnalysisPanel
+                                                fen={importGameState ? stateToFEN(importGameState) : null}
+                                                puzzleStatus={importGameState ? 'playing' : 'idle'}
+                                                puzzleFeedback={null}
+                                            />
+
+                                            {/* Game Info */}
+                                            <div className="p-4 bg-slate-800/70 border border-slate-700 rounded-xl">
+                                                <p className="text-amber-400 font-bold mb-3 text-xs uppercase tracking-wider">Game Info</p>
+                                                <div className="space-y-1.5 text-sm">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-2 h-2 rounded-full bg-white shrink-0 border border-slate-500"></span>
+                                                        <span className="text-slate-300">White: <span className="text-white font-semibold">{selectedImportGame.players?.white?.user?.name || 'Anonymous'}</span>
+                                                        <span className="text-slate-500 ml-1 text-xs">({selectedImportGame.players?.white?.rating || '?'})</span></span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-2 h-2 rounded-full bg-slate-800 shrink-0 border border-slate-400"></span>
+                                                        <span className="text-slate-300">Black: <span className="text-white font-semibold">{selectedImportGame.players?.black?.user?.name || 'Anonymous'}</span>
+                                                        <span className="text-slate-500 ml-1 text-xs">({selectedImportGame.players?.black?.rating || '?'})</span></span>
+                                                    </div>
+                                                    <p className="text-slate-400 text-xs pt-1">Result: <span className="text-white font-semibold">{selectedImportGame.winner ? selectedImportGame.winner + ' wins' : selectedImportGame.status}</span>
+                                                    <span className="mx-2 text-slate-600">·</span>Variant: <span className="text-white font-semibold">{selectedImportGame.perf}</span></p>
+                                                    {selectedImportGame.opening && <p className="text-slate-400 text-xs">Opening: <span className="text-amber-300 font-semibold">{selectedImportGame.opening.name}</span></p>}
+                                                </div>
+                                            </div>
+
+                                            {/* Move List */}
+                                            <div className="p-3 bg-slate-800/70 border border-slate-700 rounded-xl max-h-52 overflow-y-auto">
+                                                <p className="text-amber-400 font-bold mb-2 text-xs uppercase tracking-wider">Moves</p>
+                                                <div className="text-xs font-mono text-slate-300 flex flex-wrap gap-0.5">
+                                                    {importMoves.map((m,i)=>(
+                                                        <span key={i} onClick={()=>{
+                                                            let state=parseFEN(INITIAL_FEN);
+                                                            for(let j=0;j<=i;j++){const mv=sanToMove(state,importMoves[j]);if(!mv)break;state=applyMove(state,mv);}
+                                                            setImportGameState(state);setImportMoveIdx(i+1);
+                                                        }} className={`cursor-pointer px-1.5 py-0.5 rounded transition-all ${importMoveIdx===i+1?'bg-amber-600 text-white font-bold':'hover:bg-slate-700 hover:text-white'}`}>
+                                                            {i%2===0?<span className="text-slate-600 mr-0.5">{Math.floor(i/2)+1}.</span>:null}{m}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+
                                         </div>
                                     </div>
-                                    {/* Game Info Panel */}
-                                    <div className="flex-1 min-w-0 space-y-3">
-                                        <div className="p-4 bg-slate-800/70 border border-slate-700 rounded-xl">
-                                            <p className="text-amber-400 font-bold mb-3 text-sm">Game Info</p>
-                                            <div className="space-y-1 text-sm">
-                                                <p className="text-slate-300">White: <span className="text-white font-semibold">{selectedImportGame.players?.white?.user?.name || 'Anonymous'}</span> ({selectedImportGame.players?.white?.rating || '?'})</p>
-                                                <p className="text-slate-300">Black: <span className="text-white font-semibold">{selectedImportGame.players?.black?.user?.name || 'Anonymous'}</span> ({selectedImportGame.players?.black?.rating || '?'})</p>
-                                                <p className="text-slate-300">Result: <span className="text-white font-semibold">{selectedImportGame.winner ? selectedImportGame.winner + ' wins' : selectedImportGame.status}</span></p>
-                                                <p className="text-slate-300">Variant: <span className="text-white font-semibold">{selectedImportGame.perf}</span></p>
-                                                {selectedImportGame.opening && <p className="text-slate-300">Opening: <span className="text-white font-semibold">{selectedImportGame.opening.name}</span></p>}
-                                            </div>
-                                        </div>
-                                        {/* Move List */}
-                                        <div className="p-4 bg-slate-800/70 border border-slate-700 rounded-xl max-h-60 overflow-y-auto">
-                                            <p className="text-amber-400 font-bold mb-3 text-sm">Moves</p>
-                                            <div className="text-xs font-mono text-slate-300 flex flex-wrap gap-1">
-                                                {importMoves.map((m,i)=>(
-                                                    <span key={i} onClick={()=>{
-                                                        let state=parseFEN(INITIAL_FEN);
-                                                        for(let j=0;j<=i;j++){const mv=sanToMove(state,importMoves[j]);if(!mv)break;state=applyMove(state,mv);}
-                                                        setImportGameState(state);setImportMoveIdx(i+1);
-                                                    }} className={`cursor-pointer px-1.5 py-0.5 rounded transition-all ${importMoveIdx===i+1?'bg-amber-600 text-white':'hover:bg-slate-700'}`}>
-                                                        {i%2===0?`${Math.floor(i/2)+1}. `:''}
-                                                        {m}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <button onClick={()=>setLichessTab('mygames')} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-semibold">← Back to Games</button>
+                                ) : (
+                                    /* No game loaded — prompt user */
+                                    <div className="flex flex-col items-center justify-center py-20 text-center fade-in">
+                                        <div className="text-6xl mb-5 opacity-60">🔬</div>
+                                        <h3 className="text-white font-bold text-lg mb-2">Game Analysis</h3>
+                                        <p className="text-slate-400 text-sm mb-1">Koi game load nahi hua abhi.</p>
+                                        <p className="text-slate-500 text-xs mb-6">My Games tab se koi game review karo, engine analysis yahan dikhega.</p>
+                                        <button onClick={()=>{ setLichessTab('mygames'); if(myGames.length===0&&!myGamesLoading) fetchMyGames(); }}
+                                            className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-semibold text-sm transition-all shadow-lg shadow-amber-900/30">
+                                            📥 My Games Dekho
+                                        </button>
                                     </div>
-                                </div>
+                                )
                             )}
 
                             {/* ACCOUNT TAB */}
