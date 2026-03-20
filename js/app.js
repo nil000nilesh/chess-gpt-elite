@@ -258,7 +258,7 @@ const useChessAnalysis = (options = {}) => {
    eval bar · best move · continuation
    top moves · puzzle feedback display
 ══════════════════════════════════ */
-const PuzzleAnalysisPanel = ({ fen, puzzleStatus, puzzleFeedback }) => {
+const PuzzleAnalysisPanel = ({ fen, puzzleStatus, puzzleFeedback, onPlayMove }) => {
     const [analysis,  setAnalysis]  = useState(null);
     const [topMoves,  setTopMoves]  = useState([]);
     const [loading,   setLoading]   = useState(false);
@@ -342,19 +342,44 @@ const PuzzleAnalysisPanel = ({ fen, puzzleStatus, puzzleFeedback }) => {
                 {/* ── Best Move ── */}
                 {(analysis?.san || analysis?.move) && (
                     <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-700/60 border border-slate-600/40">
-                        <span className="text-xs text-slate-400">Best Move</span>
-                        <div className="flex items-center gap-2">
+                        <div>
+                            <span className="text-xs text-slate-400 block mb-0.5">Best Move</span>
                             <span className="font-mono font-bold text-amber-300 text-sm">{analysis.san || analysis.move}</span>
-                            {analysis.isCapture && <span className="text-xs text-slate-500">×</span>}
                         </div>
+                        {onPlayMove && (
+                            <button
+                                onClick={() => onPlayMove(analysis.move)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 hover:bg-green-600 active:bg-green-800 text-white rounded-lg text-xs font-bold transition-all shadow shadow-green-900/40"
+                                title="Play this move on the board"
+                            >
+                                ▶ Play
+                            </button>
+                        )}
                     </div>
                 )}
 
                 {/* ── Continuation Line ── */}
-                {continuation && (
+                {analysis?.continuationArr?.length > 0 && (
                     <div className="px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700/30">
-                        <p className="text-xs text-slate-500 mb-1">Continuation</p>
-                        <p className="text-xs font-mono text-slate-300 leading-relaxed break-all">{continuation}</p>
+                        <p className="text-xs text-slate-500 mb-2">Continuation</p>
+                        <div className="flex flex-wrap gap-1">
+                            {analysis.continuationArr.slice(0, 6).map((uci, i) => (
+                                <button
+                                    key={i}
+                                    onClick={() => onPlayMove && onPlayMove(uci)}
+                                    disabled={!onPlayMove}
+                                    className={`px-1.5 py-0.5 rounded text-xs font-mono transition-all ${
+                                        onPlayMove
+                                            ? 'bg-slate-700 hover:bg-blue-700 hover:text-white text-slate-300 cursor-pointer'
+                                            : 'bg-slate-800 text-slate-500 cursor-default'
+                                    }`}
+                                    title={onPlayMove ? 'Play this move' : uci}
+                                >
+                                    {i % 2 === 0 && <span className="text-slate-500 mr-0.5">{Math.floor(i/2)+1}.</span>}{uci}
+                                </button>
+                            ))}
+                        </div>
+                        {onPlayMove && <p className="text-xs text-slate-600 mt-1.5">Click any move to play it</p>}
                     </div>
                 )}
 
@@ -373,9 +398,16 @@ const PuzzleAnalysisPanel = ({ fen, puzzleStatus, puzzleFeedback }) => {
                                             <div className="h-full rounded-full bg-amber-500/60 transition-all"
                                                  style={{ width: `${Math.max(8, movePct)}%` }} />
                                         </div>
-                                        <span className="font-mono text-slate-400 w-12 text-right">
+                                        <span className="font-mono text-slate-400 w-10 text-right">
                                             {AnalysisHelpers.formatEval(m.eval)}
                                         </span>
+                                        {onPlayMove && m.move && (
+                                            <button
+                                                onClick={() => onPlayMove(m.move)}
+                                                className="px-2 py-0.5 bg-green-800/70 hover:bg-green-700 text-green-300 rounded text-xs font-bold transition-all"
+                                                title="Play this move"
+                                            >▶</button>
+                                        )}
                                     </div>
                                 );
                             })}
@@ -458,6 +490,7 @@ const ChessApp = ({ user }) => {
     const [importGameState,setImportGameState]=useState(null);
     const [importMoveIdx,setImportMoveIdx]=useState(0);
     const [importMoves,setImportMoves]=useState([]);
+    const [explorationBase,setExplorationBase]=useState(null); // {state, moveIdx} snapshot when exploring engine lines
     const abortControllerRef=useRef(null);
 
     useEffect(()=>{
@@ -549,30 +582,63 @@ const ChessApp = ({ user }) => {
         setImportMoveIdx(0);
         setImportGameState(parseFEN(INITIAL_FEN));
         setSelectedImportGame(game);
+        setExplorationBase(null); // clear any previous exploration
         setLichessTab('analysis');
         showMsg('✅ Game loaded! Analysis tab mein dekho');
     };
 
+    // Play a UCI move from the engine analysis on the current board position
+    const playAnalysisMove = (uciMove) => {
+        if (!importGameState || !uciMove || uciMove.length < 4) return;
+        const files = 'abcdefgh', ranks = '87654321';
+        const fromC = files.indexOf(uciMove[0]), fromR = ranks.indexOf(uciMove[1]);
+        const toC   = files.indexOf(uciMove[2]), toR   = ranks.indexOf(uciMove[3]);
+        const promo = uciMove[4] || null;
+        if (fromC < 0 || fromR < 0 || toC < 0 || toR < 0) return;
+
+        const legal = generateLegalMoves(importGameState, importGameState.turn);
+        const move  = legal.find(m =>
+            m.from[0] === fromR && m.from[1] === fromC &&
+            m.to[0]   === toR   && m.to[1]   === toC   &&
+            (!promo || m.special?.promote === promo)
+        );
+        if (!move) return;
+
+        // First time entering exploration — save the game position to return to
+        if (!explorationBase) setExplorationBase({ state: importGameState, moveIdx: importMoveIdx });
+        setImportGameState(applyMove(importGameState, move));
+    };
+
+    // Exit exploration and return to saved game position
+    const exitExploration = () => {
+        if (!explorationBase) return;
+        setImportGameState(explorationBase.state);
+        setImportMoveIdx(explorationBase.moveIdx);
+        setExplorationBase(null);
+    };
+
+    // Navigation — always rebuilds from game moves, clearing any exploration state
     const importGameForward = () => {
-        if (!importGameState || importMoveIdx >= importMoves.length) return;
-        const move = sanToMove(importGameState, importMoves[importMoveIdx]);
-        if (move) { setImportGameState(applyMove(importGameState, move)); setImportMoveIdx(prev=>prev+1); }
+        if (importMoveIdx >= importMoves.length) return;
+        // Rebuild cleanly from game move list to escape exploration state
+        let state = parseFEN(INITIAL_FEN);
+        for (let i = 0; i < importMoveIdx; i++) { const m = sanToMove(state, importMoves[i]); if (!m) break; state = applyMove(state, m); }
+        const move = sanToMove(state, importMoves[importMoveIdx]);
+        if (move) { setImportGameState(applyMove(state, move)); setImportMoveIdx(prev=>prev+1); setExplorationBase(null); }
     };
 
     const importGameBackward = () => {
+        if (explorationBase) { exitExploration(); return; } // one press exits exploration
         if (importMoveIdx <= 0) return;
         let state = parseFEN(INITIAL_FEN);
-        for (let i = 0; i < importMoveIdx - 1; i++) {
-            const m = sanToMove(state, importMoves[i]);
-            if (!m) break;
-            state = applyMove(state, m);
-        }
+        for (let i = 0; i < importMoveIdx - 1; i++) { const m = sanToMove(state, importMoves[i]); if (!m) break; state = applyMove(state, m); }
         setImportGameState(state);
         setImportMoveIdx(prev=>prev-1);
     };
 
-    const importGameGotoStart = () => { setImportGameState(parseFEN(INITIAL_FEN)); setImportMoveIdx(0); };
+    const importGameGotoStart = () => { setExplorationBase(null); setImportGameState(parseFEN(INITIAL_FEN)); setImportMoveIdx(0); };
     const importGameGotoEnd = () => {
+        setExplorationBase(null);
         let state = parseFEN(INITIAL_FEN);
         for (const san of importMoves) { const m = sanToMove(state, san); if (!m) break; state = applyMove(state, m); }
         setImportGameState(state);
@@ -873,15 +939,27 @@ const ChessApp = ({ user }) => {
                                     <div className="flex flex-col lg:flex-row gap-5 items-start">
                                         {/* Board + Controls */}
                                         <div className="flex flex-col items-center shrink-0">
-                                            <div className="mb-2 text-xs text-slate-400 font-medium font-mono bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-700">
-                                                Move <span className="text-white font-bold">{importMoveIdx}</span> / {importMoves.length}
-                                                <span className="ml-3 text-slate-500">{importGameState ? AnalysisHelpers.sideFromFEN(stateToFEN(importGameState)) + ' to move' : ''}</span>
-                                            </div>
+                                            {/* Status bar — shows exploration state or normal position */}
+                                            {explorationBase ? (
+                                                <div className="mb-2 w-full flex items-center justify-between px-3 py-1.5 rounded-lg border border-blue-500/50 bg-blue-900/20 text-xs">
+                                                    <span className="text-blue-300 font-semibold">⚡ Exploring engine line</span>
+                                                    <button onClick={exitExploration}
+                                                        className="px-2.5 py-1 bg-blue-700 hover:bg-blue-600 text-white rounded font-bold transition-all">
+                                                        ↩ Return to game
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="mb-2 text-xs text-slate-400 font-mono bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-700 w-full text-center">
+                                                    Move <span className="text-white font-bold">{importMoveIdx}</span> / {importMoves.length}
+                                                    <span className="ml-3 text-slate-500">{importGameState ? AnalysisHelpers.sideFromFEN(stateToFEN(importGameState)) + ' to move' : ''}</span>
+                                                </div>
+                                            )}
                                             {renderImportBoard()}
                                             <div className="flex gap-2 mt-3">
                                                 <button onClick={importGameGotoStart} title="Start" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center text-sm">⏮</button>
-                                                <button onClick={importGameBackward} title="Prev" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center">◀</button>
-                                                <button onClick={importGameForward} title="Next" className="w-10 h-10 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold flex items-center justify-center">▶</button>
+                                                <button onClick={importGameBackward} title={explorationBase ? 'Return to game' : 'Prev move'}
+                                                    className={`w-10 h-10 rounded-lg text-white font-bold flex items-center justify-center transition-all ${explorationBase ? 'bg-blue-700 hover:bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'}`}>◀</button>
+                                                <button onClick={importGameForward} title="Next move" className="w-10 h-10 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold flex items-center justify-center">▶</button>
                                                 <button onClick={importGameGotoEnd} title="End" className="w-10 h-10 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold flex items-center justify-center text-sm">⏭</button>
                                             </div>
                                             <button onClick={()=>setLichessTab('mygames')} className="mt-3 px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 transition-all">← Change Game</button>
@@ -890,11 +968,12 @@ const ChessApp = ({ user }) => {
                                         {/* Right Panel */}
                                         <div className="flex-1 min-w-0 space-y-3">
 
-                                            {/* Engine Analysis */}
+                                            {/* Engine Analysis — with play buttons enabled */}
                                             <PuzzleAnalysisPanel
                                                 fen={importGameState ? stateToFEN(importGameState) : null}
                                                 puzzleStatus={importGameState ? 'playing' : 'idle'}
                                                 puzzleFeedback={null}
+                                                onPlayMove={playAnalysisMove}
                                             />
 
                                             {/* Game Info */}
