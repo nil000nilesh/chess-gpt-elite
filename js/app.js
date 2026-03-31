@@ -16,14 +16,14 @@ const ADMIN_EMAIL = 'nil000nilesh@gmail.com';
    ACCESS DENIED PAGE
 ══════════════════════════════════ */
 const AccessDenied = ({ user }) => (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{background:'radial-gradient(ellipse at top,#0f172a 0%,#020617 70%)'}}>
+    <div className="min-h-[100dvh] flex items-center justify-center p-4" style={{background:'radial-gradient(ellipse at top,#0f172a 0%,#020617 70%)'}}>
         <div className="w-full max-w-sm text-center fade-in">
-            <div className="rounded-3xl p-8 border" style={{background:'rgba(15,23,42,0.92)',borderColor:'rgba(239,68,68,0.25)',boxShadow:'0 0 60px rgba(239,68,68,0.08),0 25px 60px rgba(0,0,0,0.6)'}}>
-                <div className="text-6xl mb-4">🔒</div>
-                <h1 className="chess-title text-2xl font-bold mb-2" style={{color:'#f87171'}}>Access Denied</h1>
+            <div className="rounded-2xl sm:rounded-3xl p-6 sm:p-8 border" style={{background:'rgba(15,23,42,0.92)',borderColor:'rgba(239,68,68,0.25)',boxShadow:'0 0 60px rgba(239,68,68,0.08),0 25px 60px rgba(0,0,0,0.6)'}}>
+                <div className="text-5xl sm:text-6xl mb-4">🔒</div>
+                <h1 className="chess-title text-xl sm:text-2xl font-bold mb-2" style={{color:'#f87171'}}>Access Denied</h1>
                 <p className="text-slate-400 text-sm mb-2">Aapka account abhi approved nahi hai.</p>
                 <p className="text-slate-500 text-xs mb-6">Admin se contact karo access ke liye.</p>
-                <div className="rounded-xl p-3 mb-6 text-xs text-slate-400 font-mono" style={{background:'rgba(30,41,59,0.8)'}}>
+                <div className="rounded-xl p-3 mb-6 text-xs text-slate-400 font-mono break-all" style={{background:'rgba(30,41,59,0.8)'}}>
                     {user.email}
                 </div>
                 <button onClick={()=>auth.signOut()}
@@ -84,12 +84,12 @@ const UsersTab = () => {
     };
 
     return (
-        <div className="max-w-2xl mx-auto space-y-5 fade-in py-4">
-            <div className="rounded-2xl p-5 border border-amber-500/30 bg-amber-900/10">
+        <div className="max-w-2xl mx-auto space-y-4 sm:space-y-5 fade-in py-3 sm:py-4 px-2 sm:px-0">
+            <div className="rounded-2xl p-4 sm:p-5 border border-amber-500/30 bg-amber-900/10">
                 <div className="flex items-center gap-3 mb-1">
                     <span className="text-2xl">👑</span>
                     <div>
-                        <h2 className="text-amber-400 font-bold text-lg">User Access Management</h2>
+                        <h2 className="text-amber-400 font-bold text-base sm:text-lg">User Access Management</h2>
                         <p className="text-slate-500 text-xs">Sirf admin ko yeh tab dikh raha hai</p>
                     </div>
                 </div>
@@ -130,30 +130,129 @@ const UsersTab = () => {
 };
 
 /* ══════════════════════════════════
-   LOGIN PAGE
+   LOGIN PAGE — Redesigned
 ══════════════════════════════════ */
 const LoginPage = () => {
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState('');
+    const [mode, setMode] = useState('login'); // 'login' | 'signup'
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [showPass, setShowPass] = useState(false);
+
     const signInWithGoogle = async () => {
         setLoading(true); setErr('');
         try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
-        catch { setErr('Sign-in failed. Please try again.'); setLoading(false); }
+        catch { setErr('Google sign-in failed. Try again.'); setLoading(false); }
     };
+
+    const handleEmailAuth = async (e) => {
+        e.preventDefault();
+        if (!email.trim() || !password) { setErr('Email aur password dono daalo.'); return; }
+        setLoading(true); setErr('');
+        try {
+            if (mode === 'signup') {
+                await auth.createUserWithEmailAndPassword(email.trim(), password);
+            } else {
+                await auth.signInWithEmailAndPassword(email.trim(), password);
+            }
+        } catch (error) {
+            const code = error.code || '';
+            if (code === 'auth/user-not-found') setErr('Account nahi mila. Sign up karo pehle.');
+            else if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') setErr('Galat password. Dobara try karo.');
+            else if (code === 'auth/email-already-in-use') setErr('Yeh email pehle se registered hai. Login karo.');
+            else if (code === 'auth/weak-password') setErr('Password kamzor hai. Minimum 6 characters.');
+            else if (code === 'auth/invalid-email') setErr('Invalid email address.');
+            else setErr(error.message || 'Authentication failed.');
+            setLoading(false);
+        }
+    };
+
+    const resetPassword = async () => {
+        if (!email.trim()) { setErr('Pehle email daalo, phir reset karo.'); return; }
+        try {
+            await auth.sendPasswordResetEmail(email.trim());
+            setErr('');
+            alert('Password reset email bhej diya hai! Check karo inbox.');
+        } catch { setErr('Reset email nahi bhej paaye. Email check karo.'); }
+    };
+
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-slate-950">
-            <div className="relative z-10 w-full max-w-sm fade-in">
-                <div className="rounded-3xl p-8 border border-slate-800 bg-slate-900/90 shadow-2xl">
-                    <div className="text-center mb-8">
-                        <div className="text-7xl float-animate mb-3">♛</div>
-                        <h1 className="chess-title text-3xl font-bold mb-1 text-amber-400">ChessGPT Elite</h1>
-                        <p className="text-slate-500 text-xs tracking-wider uppercase">AI-Powered Chess Training</p>
+        <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={{background:'radial-gradient(ellipse at 50% 0%,#1a1207 0%,#0c0a09 40%,#020617 100%)'}}>
+            {/* Background chess pattern */}
+            <div className="absolute inset-0 opacity-[0.03]" style={{backgroundImage:'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Crect width=\'30\' height=\'30\' fill=\'%23fff\'/%3E%3Crect x=\'30\' y=\'30\' width=\'30\' height=\'30\' fill=\'%23fff\'/%3E%3C/svg%3E")',backgroundSize:'60px 60px'}} />
+
+            <div className="relative z-10 w-full max-w-md fade-in">
+                {/* Logo & Title */}
+                <div className="text-center mb-6 sm:mb-8">
+                    <div className="inline-block relative">
+                        <div className="text-7xl sm:text-8xl float-animate mb-2" style={{textShadow:'0 0 40px rgba(245,158,11,0.3)'}}>♛</div>
+                        <div className="absolute -inset-4 bg-amber-500/10 blur-3xl rounded-full" />
                     </div>
-                    <button onClick={signInWithGoogle} disabled={loading} className="w-full py-3.5 rounded-xl font-semibold text-sm bg-white text-slate-800 hover:bg-gray-100 transition-all">
-                        {loading ? 'Signing in…' : 'Continue with Google'}
-                    </button>
-                    {err && <p className="text-red-400 text-xs text-center mt-3">{err}</p>}
+                    <h1 className="chess-title text-3xl sm:text-4xl font-black text-amber-400" style={{textShadow:'0 2px 20px rgba(245,158,11,0.2)'}}>ChessGPT Elite</h1>
+                    <p className="text-slate-500 text-xs sm:text-sm tracking-[0.2em] uppercase mt-1">AI-Powered Chess Training</p>
                 </div>
+
+                {/* Login Card */}
+                <div className="rounded-2xl sm:rounded-3xl p-6 sm:p-8 border border-slate-700/50 backdrop-blur-xl" style={{background:'linear-gradient(180deg,rgba(15,23,42,0.95) 0%,rgba(2,6,23,0.98) 100%)',boxShadow:'0 0 80px rgba(245,158,11,0.06),0 25px 60px rgba(0,0,0,0.7)'}}>
+
+                    {/* Tab Toggle */}
+                    <div className="flex mb-6 bg-slate-800/80 rounded-xl p-1 border border-slate-700/50">
+                        <button onClick={()=>{setMode('login');setErr('');}} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${mode==='login'?'bg-amber-600 text-white shadow-lg shadow-amber-900/30':'text-slate-400 hover:text-slate-200'}`}>Login</button>
+                        <button onClick={()=>{setMode('signup');setErr('');}} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${mode==='signup'?'bg-amber-600 text-white shadow-lg shadow-amber-900/30':'text-slate-400 hover:text-slate-200'}`}>Sign Up</button>
+                    </div>
+
+                    {/* Email/Password Form */}
+                    <form onSubmit={handleEmailAuth} className="space-y-4 mb-5">
+                        <div>
+                            <label className="text-slate-400 text-xs font-semibold mb-1.5 block uppercase tracking-wider">Email</label>
+                            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"
+                                className="w-full px-4 py-3 bg-slate-800/80 text-white rounded-xl border border-slate-600/50 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none text-sm placeholder-slate-600 transition-all" />
+                        </div>
+                        <div>
+                            <label className="text-slate-400 text-xs font-semibold mb-1.5 block uppercase tracking-wider">Password</label>
+                            <div className="relative">
+                                <input type={showPass?'text':'password'} value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••"
+                                    className="w-full px-4 py-3 bg-slate-800/80 text-white rounded-xl border border-slate-600/50 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none text-sm placeholder-slate-600 transition-all pr-12" />
+                                <button type="button" onClick={()=>setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-sm transition-colors">
+                                    {showPass ? '🙈' : '👁'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {mode === 'login' && (
+                            <div className="text-right">
+                                <button type="button" onClick={resetPassword} className="text-amber-500/70 hover:text-amber-400 text-xs transition-colors">Forgot Password?</button>
+                            </div>
+                        )}
+
+                        <button type="submit" disabled={loading}
+                            className="w-full py-3.5 rounded-xl font-bold text-sm text-white transition-all relative overflow-hidden"
+                            style={{background:'linear-gradient(135deg,#d97706,#b45309)',boxShadow:'0 4px 20px rgba(217,119,6,0.3)'}}>
+                            <span className="relative z-10">{loading ? 'Please wait…' : mode === 'signup' ? 'Create Account' : 'Login'}</span>
+                        </button>
+                    </form>
+
+                    {/* Divider */}
+                    <div className="flex items-center gap-3 mb-5">
+                        <div className="flex-1 h-px bg-slate-700/60" />
+                        <span className="text-slate-500 text-xs font-medium">OR</span>
+                        <div className="flex-1 h-px bg-slate-700/60" />
+                    </div>
+
+                    {/* Google Button */}
+                    <button onClick={signInWithGoogle} disabled={loading}
+                        className="w-full py-3.5 rounded-xl font-semibold text-sm bg-white text-slate-800 hover:bg-gray-100 transition-all flex items-center justify-center gap-3 shadow-lg shadow-black/20">
+                        <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+                        Continue with Google
+                    </button>
+
+                    {/* Error Message */}
+                    {err && <div className="mt-4 p-3 rounded-xl text-xs text-center font-medium bg-red-900/20 text-red-400 border border-red-800/30">{err}</div>}
+                </div>
+
+                {/* Footer */}
+                <p className="text-center text-slate-600 text-xs mt-6">Secure login powered by Firebase</p>
             </div>
         </div>
     );
@@ -182,8 +281,8 @@ const SettingsTab = ({ user }) => {
         setSaving(false);
     };
     return (
-        <div className="max-w-xl mx-auto space-y-5 fade-in py-4">
-            <div className="rounded-2xl p-5 border border-slate-700/50 bg-slate-800/80">
+        <div className="max-w-xl mx-auto space-y-4 sm:space-y-5 fade-in py-3 sm:py-4 px-2 sm:px-0">
+            <div className="rounded-2xl p-4 sm:p-5 border border-slate-700/50 bg-slate-800/80">
                 <h3 className="text-amber-400 font-semibold mb-4 flex items-center gap-2">🔑 API Keys</h3>
                 {loadingK?<p className="text-slate-400 text-center py-6 text-sm">Loading keys…</p>:(
                     <div className="space-y-4">
@@ -705,26 +804,26 @@ const ChessApp = ({ user }) => {
     const renderCaptured=(color)=>{const order={q:1,r:2,b:3,n:4,p:5};const sorted=[...capturedPieces[color]].sort((a,b)=>order[a]-order[b]);return <div className="flex flex-wrap gap-0.5 min-h-[22px] items-center">{sorted.map((p,i)=><span key={i} style={{fontSize:'16px',lineHeight:'1'}}>{PIECE_UNICODE[color][p]}</span>)}</div>;};
 
     const renderBoard=()=>{const files=['a','b','c','d','e','f','g','h'],t=boardTheme;return(
-        <div className="inline-block shadow-2xl rounded-sm overflow-hidden" style={{border:`4px solid ${t.border}`}}>
+        <div className="inline-block shadow-2xl rounded-sm overflow-hidden w-full max-w-[min(90vw,640px)]" style={{border:`4px solid ${t.border}`}}>
             {Array.from({length:8},(_,r)=>(
                 <div key={r} className="flex">
-                    {Array.from({length:8},(_,c)=>{const piece=gameState.board[r][c],isLight=(r+c)%2===0,isSel=selectedSquare&&selectedSquare[0]===r&&selectedSquare[1]===c,isLeg=isLegalTarget(r,c),isLast=lastMove&&((lastMove.from[0]===r&&lastMove.from[1]===c)||(lastMove.to[0]===r&&lastMove.to[1]===c)),isKC=inCheck&&kingPos&&kingPos[0]===r&&kingPos[1]===c;let bg=isLight?t.light:t.dark;if(isLast)bg=isLight?t.lastLight:t.lastDark;let cls='';if(isSel)cls+=' square-selected';if(isLeg&&!piece)cls+=' square-legal';if(isLeg&&piece)cls+=' square-capture';if(isKC)cls+=' square-check';return(<div key={`${r}-${c}`} className={`w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20 flex items-center justify-center cursor-pointer select-none relative${cls}`} style={{backgroundColor:bg}} onClick={()=>handleSquareClick(r,c)}>{piece&&renderPiece(piece)}{r===7&&<span className="absolute bottom-0.5 right-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}{c===0&&<span className="absolute top-0.5 left-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}</div>);})}
+                    {Array.from({length:8},(_,c)=>{const piece=gameState.board[r][c],isLight=(r+c)%2===0,isSel=selectedSquare&&selectedSquare[0]===r&&selectedSquare[1]===c,isLeg=isLegalTarget(r,c),isLast=lastMove&&((lastMove.from[0]===r&&lastMove.from[1]===c)||(lastMove.to[0]===r&&lastMove.to[1]===c)),isKC=inCheck&&kingPos&&kingPos[0]===r&&kingPos[1]===c;let bg=isLight?t.light:t.dark;if(isLast)bg=isLight?t.lastLight:t.lastDark;let cls='';if(isSel)cls+=' square-selected';if(isLeg&&!piece)cls+=' square-legal';if(isLeg&&piece)cls+=' square-capture';if(isKC)cls+=' square-check';return(<div key={`${r}-${c}`} className={`aspect-square flex items-center justify-center cursor-pointer select-none relative${cls}`} style={{backgroundColor:bg,width:'12.5%'}} onClick={()=>handleSquareClick(r,c)}>{piece&&renderPiece(piece)}{r===7&&<span className="absolute bottom-0 right-0.5 text-[8px] sm:text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}{c===0&&<span className="absolute top-0 left-0.5 text-[8px] sm:text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}</div>);})}
                 </div>
             ))}
         </div>
     );};
 
     const renderPuzzleBoard=()=>{const files=['a','b','c','d','e','f','g','h'],t=boardTheme,ps=puzzleGameState;return(
-        <div className="inline-block shadow-2xl rounded-sm overflow-hidden" style={{border:`4px solid ${t.border}`}}>
+        <div className="inline-block shadow-2xl rounded-sm overflow-hidden w-full max-w-[min(90vw,640px)]" style={{border:`4px solid ${t.border}`}}>
             {Array.from({length:8},(_,r)=>(
                 <div key={r} className="flex">
-                    {Array.from({length:8},(_,c)=>{const piece=ps.board[r][c],isLight=(r+c)%2===0,isSel=ps._selected&&ps._selected[0]===r&&ps._selected[1]===c;let bg=isLight?t.light:t.dark,cls='';if(isSel)cls+=' square-selected';return(<div key={`${r}-${c}`} className={`w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20 flex items-center justify-center cursor-pointer select-none relative${cls}`} style={{backgroundColor:bg}} onClick={()=>handlePuzzleMove(r,c)}>{piece&&<span style={{fontSize:'clamp(22px,3.8vw,46px)',lineHeight:'1',userSelect:'none',pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',textShadow:'0 1px 4px rgba(0,0,0,0.7)'}}>{PIECE_UNICODE[piece.color][piece.type]}</span>}{r===7&&<span className="absolute bottom-0.5 right-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}{c===0&&<span className="absolute top-0.5 left-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}</div>);})}
+                    {Array.from({length:8},(_,c)=>{const piece=ps.board[r][c],isLight=(r+c)%2===0,isSel=ps._selected&&ps._selected[0]===r&&ps._selected[1]===c;let bg=isLight?t.light:t.dark,cls='';if(isSel)cls+=' square-selected';return(<div key={`${r}-${c}`} className={`aspect-square flex items-center justify-center cursor-pointer select-none relative${cls}`} style={{backgroundColor:bg,width:'12.5%'}} onClick={()=>handlePuzzleMove(r,c)}>{piece&&<span style={{fontSize:'clamp(22px,3.8vw,46px)',lineHeight:'1',userSelect:'none',pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',textShadow:'0 1px 4px rgba(0,0,0,0.7)'}}>{PIECE_UNICODE[piece.color][piece.type]}</span>}{r===7&&<span className="absolute bottom-0 right-0.5 text-[8px] sm:text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}{c===0&&<span className="absolute top-0 left-0.5 text-[8px] sm:text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}</div>);})}
                 </div>
             ))}
         </div>
     );};
 
-    const renderImportBoard=()=>{if(!importGameState)return null;const files=['a','b','c','d','e','f','g','h'],t=boardTheme,ps=importGameState;return(<div className="inline-block shadow-2xl rounded-sm overflow-hidden" style={{border:`4px solid ${t.border}`}}>{Array.from({length:8},(_,r)=>(<div key={r} className="flex">{Array.from({length:8},(_,c)=>{const piece=ps.board[r][c],isLight=(r+c)%2===0;let bg=isLight?t.light:t.dark;return(<div key={`${r}-${c}`} className="w-10 h-10 sm:w-14 sm:h-14 md:w-16 md:h-16 flex items-center justify-center select-none relative" style={{backgroundColor:bg}}>{piece&&<span style={{fontSize:'clamp(18px,3.2vw,38px)',lineHeight:'1',userSelect:'none',pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',textShadow:'0 1px 4px rgba(0,0,0,0.7)'}}>{PIECE_UNICODE[piece.color][piece.type]}</span>}{r===7&&<span className="absolute bottom-0.5 right-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}{c===0&&<span className="absolute top-0.5 left-1 text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}</div>);})}</div>))}</div>);};
+    const renderImportBoard=()=>{if(!importGameState)return null;const files=['a','b','c','d','e','f','g','h'],t=boardTheme,ps=importGameState;return(<div className="inline-block shadow-2xl rounded-sm overflow-hidden w-full max-w-[min(85vw,520px)]" style={{border:`4px solid ${t.border}`}}>{Array.from({length:8},(_,r)=>(<div key={r} className="flex">{Array.from({length:8},(_,c)=>{const piece=ps.board[r][c],isLight=(r+c)%2===0;let bg=isLight?t.light:t.dark;return(<div key={`${r}-${c}`} className="aspect-square flex items-center justify-center select-none relative" style={{backgroundColor:bg,width:'12.5%'}}>{piece&&<span style={{fontSize:'clamp(18px,3.2vw,38px)',lineHeight:'1',userSelect:'none',pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',textShadow:'0 1px 4px rgba(0,0,0,0.7)'}}>{PIECE_UNICODE[piece.color][piece.type]}</span>}{r===7&&<span className="absolute bottom-0 right-0.5 text-[8px] sm:text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{files[c]}</span>}{c===0&&<span className="absolute top-0 left-0.5 text-[8px] sm:text-xs font-semibold pointer-events-none" style={{color:isLight?t.labelLight:t.labelDark}}>{8-r}</span>}</div>);})}</div>))}</div>);};
 
     const renderMoveHistory=()=>{const pairs=[];for(let i=0;i<moveHistory.length;i+=2)pairs.push({num:Math.floor(i/2)+1,w:moveHistory[i],b:moveHistory[i+1]||''});return(<div className="max-h-64 overflow-y-auto space-y-1 text-sm font-mono">{pairs.length===0?<p className="text-slate-500 text-center italic text-xs py-4">Make a move…</p>:pairs.map(p=><div key={p.num} className="flex text-slate-300 py-1.5 px-2 rounded hover:bg-slate-700/50 border-b border-slate-700/30"><span className="text-slate-500 w-10">{p.num}.</span><span className="w-20 font-semibold">{p.w}</span><span className="w-20 font-semibold">{p.b}</span></div>)}</div>);};
 
@@ -738,26 +837,28 @@ const ChessApp = ({ user }) => {
         {id:"settings", icon:"⚙️", label:"Settings"}
     ];
 
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
     return (
-        <div className="flex h-screen w-full bg-slate-950 text-white overflow-hidden font-sans">
-            
-            {/* ── LEFT SIDEBAR NAVIGATION ── */}
-            <nav className="w-16 md:w-60 flex flex-col border-r border-slate-800 bg-slate-900 shrink-0 z-20 shadow-xl">
-                <div className="h-16 flex items-center justify-center md:justify-start md:px-5 border-b border-slate-800">
+        <div className="flex flex-col md:flex-row h-[100dvh] w-full bg-slate-950 text-white overflow-hidden font-sans">
+
+            {/* ── LEFT SIDEBAR NAVIGATION (hidden on mobile) ── */}
+            <nav className="hidden md:flex w-60 lg:w-64 flex-col border-r border-slate-800 bg-slate-900 shrink-0 z-20 shadow-xl">
+                <div className="h-16 flex items-center justify-start px-5 border-b border-slate-800">
                     <span className="text-3xl text-amber-500 float-animate">♛</span>
-                    <span className="hidden md:block ml-3 font-bold text-lg chess-title text-amber-500">ChessGPT Elite</span>
+                    <span className="ml-3 font-bold text-lg chess-title text-amber-500">ChessGPT Elite</span>
                 </div>
-                
+
                 <div className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
                     {TABS.map(t => (
                         <button key={t.id} onClick={()=>{
                             setActiveTab(t.id);
                             if(t.id==='puzzles'&&!currentPuzzle) fetchPuzzle();
                             if(t.id==='lichess') { fetchMyAccount(); fetchBoardGames(); }
-                        }} 
+                        }}
                         className={`w-full flex items-center p-3 rounded-xl transition-all ${activeTab===t.id ? 'bg-amber-600/20 text-amber-400 font-bold' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium'}`}>
-                            <span className="text-xl md:mr-3 flex justify-center w-6">{t.icon}</span>
-                            <span className="hidden md:block text-sm">{t.label}</span>
+                            <span className="text-xl mr-3 flex justify-center w-6">{t.icon}</span>
+                            <span className="text-sm">{t.label}</span>
                         </button>
                     ))}
                 </div>
@@ -765,28 +866,40 @@ const ChessApp = ({ user }) => {
                 <div className="p-3 border-t border-slate-800">
                     <div className="flex items-center gap-3 p-2 rounded-xl bg-slate-800/50 border border-slate-700">
                         {user.photoURL ? <img src={user.photoURL} alt="user" className="w-8 h-8 rounded-full border border-slate-600" /> : <div className="w-8 h-8 rounded-full bg-amber-600 flex items-center justify-center font-bold text-white">{user.displayName?.[0]||'U'}</div>}
-                        <div className="hidden md:block flex-1 min-w-0">
-                            <p className="text-sm font-semibold truncate text-slate-200">{user.displayName?.split(' ')[0]}</p>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold truncate text-slate-200">{user.displayName?.split(' ')[0] || user.email?.split('@')[0]}</p>
                         </div>
-                        <button onClick={()=>auth.signOut()} className="hidden md:block text-slate-400 hover:text-red-400 transition-colors" title="Logout">🚪</button>
+                        <button onClick={()=>auth.signOut()} className="text-slate-400 hover:text-red-400 transition-colors" title="Logout">🚪</button>
                     </div>
                 </div>
             </nav>
 
+            {/* ── MOBILE TOP BAR ── */}
+            <div className="md:hidden flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 shrink-0 z-30">
+                <div className="flex items-center gap-2">
+                    <span className="text-2xl text-amber-500">♛</span>
+                    <span className="font-bold text-sm chess-title text-amber-500">ChessGPT Elite</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    {user.photoURL ? <img src={user.photoURL} alt="user" className="w-7 h-7 rounded-full border border-slate-600" /> : <div className="w-7 h-7 rounded-full bg-amber-600 flex items-center justify-center font-bold text-white text-xs">{user.displayName?.[0]||'U'}</div>}
+                    <button onClick={()=>auth.signOut()} className="text-slate-400 hover:text-red-400 text-sm p-1">🚪</button>
+                </div>
+            </div>
+
             {/* ── MAIN CONTENT AREA (Split View) ── */}
             <main className="flex-1 flex flex-col md:flex-row overflow-hidden bg-[#161512]">
-                
+
                 {/* ── CENTER: BOARD & MAIN CONTENT ── */}
-                <div className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col items-center justify-center">
+                <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 flex flex-col items-center justify-start md:justify-center">
                     
                     {activeTab === 'play' && (
                         <div className="fade-in max-w-3xl mx-auto w-full flex flex-col items-center">
-                            <div className="w-full flex items-center justify-between mb-2 px-1 bg-slate-800/60 p-2 rounded-t-lg border-b border-slate-700">
+                            <div className="w-full flex items-center justify-between mb-1 sm:mb-2 px-1 bg-slate-800/60 p-1.5 sm:p-2 rounded-t-lg border-b border-slate-700">
                                 <div className="flex items-center gap-2">
-                                    <div className="w-8 h-8 rounded-sm bg-slate-700 flex justify-center items-center text-xl">🤖</div>
+                                    <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-sm bg-slate-700 flex justify-center items-center text-base sm:text-xl">🤖</div>
                                     <div>
-                                        <span className={`font-semibold text-sm ${gameState.turn===BLACK&&!gameResult?'text-amber-400':'text-slate-300'}`}>Stockfish (Black)</span>
-                                        <div className="text-xs text-slate-500">AI Engine</div>
+                                        <span className={`font-semibold text-xs sm:text-sm ${gameState.turn===BLACK&&!gameResult?'text-amber-400':'text-slate-300'}`}>Stockfish (Black)</span>
+                                        <div className="text-[10px] sm:text-xs text-slate-500">AI Engine</div>
                                     </div>
                                 </div>
                                 {renderCaptured('w')}
@@ -794,12 +907,12 @@ const ChessApp = ({ user }) => {
                             
                             {renderBoard()}
                             
-                            <div className="w-full flex items-center justify-between mt-2 px-1 bg-slate-800/60 p-2 rounded-b-lg border-t border-slate-700">
+                            <div className="w-full flex items-center justify-between mt-1 sm:mt-2 px-1 bg-slate-800/60 p-1.5 sm:p-2 rounded-b-lg border-t border-slate-700">
                                 <div className="flex items-center gap-2">
-                                    {user.photoURL ? <img src={user.photoURL} className="w-8 h-8 rounded-sm border border-slate-600" /> : <div className="w-8 h-8 rounded-sm bg-amber-600 flex justify-center items-center font-bold text-white">{user.displayName?.[0]}</div>}
+                                    {user.photoURL ? <img src={user.photoURL} className="w-6 h-6 sm:w-8 sm:h-8 rounded-sm border border-slate-600" /> : <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-sm bg-amber-600 flex justify-center items-center font-bold text-white text-xs sm:text-base">{user.displayName?.[0]}</div>}
                                     <div>
-                                        <span className={`font-semibold text-sm ${gameState.turn===WHITE&&!gameResult?'text-amber-400':'text-slate-300'}`}>{user.displayName?.split(' ')[0]} (White)</span>
-                                        <div className="text-xs text-slate-500">Player</div>
+                                        <span className={`font-semibold text-xs sm:text-sm ${gameState.turn===WHITE&&!gameResult?'text-amber-400':'text-slate-300'}`}>{user.displayName?.split(' ')[0] || 'You'} (White)</span>
+                                        <div className="text-[10px] sm:text-xs text-slate-500">Player</div>
                                     </div>
                                 </div>
                                 {renderCaptured('b')}
@@ -826,14 +939,14 @@ const ChessApp = ({ user }) => {
                     {activeTab === 'games' && <div className="fade-in w-full max-w-4xl"><h2 className="text-2xl font-bold text-amber-400 mb-6 border-b border-slate-800 pb-2">👤 Player Analysis</h2><div className="p-6 bg-slate-800/50 rounded-xl border border-slate-700"><p className="text-slate-300">Player lookup interface here.</p></div></div>}
                     
                     {activeTab === 'lichess' && (
-                        <div className="fade-in w-full max-w-5xl">
-                            <h2 className="text-2xl font-bold text-amber-400 mb-4 border-b border-slate-800 pb-2">♞ Lichess Integration</h2>
+                        <div className="fade-in w-full max-w-5xl px-1 sm:px-0">
+                            <h2 className="text-lg sm:text-2xl font-bold text-amber-400 mb-3 sm:mb-4 border-b border-slate-800 pb-2">♞ Lichess Integration</h2>
 
                             {/* Sub-tabs */}
-                            <div className="flex gap-2 mb-5 overflow-x-auto pb-1">
+                            <div className="flex gap-1.5 sm:gap-2 mb-4 sm:mb-5 overflow-x-auto pb-1 -mx-1 px-1">
                                 {[
                                     {id:'mygames',  label:'📥 My Games'},
-                                    {id:'analysis', label:'🔬 Game Analysis'},
+                                    {id:'analysis', label:'🔬 Analysis'},
                                     {id:'account',  label:'👤 Account'},
                                     {id:'live',     label:'📡 Live'}
                                 ].map(st=>(
@@ -841,7 +954,7 @@ const ChessApp = ({ user }) => {
                                         setLichessTab(st.id);
                                         if(st.id==='mygames'&&myGames.length===0&&!myGamesLoading) fetchMyGames();
                                         if(st.id==='live') fetchBoardGames();
-                                    }} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${
+                                    }} className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all ${
                                         lichessTab===st.id
                                             ? (st.id==='analysis' ? 'bg-blue-700 text-white' : 'bg-amber-600 text-white')
                                             : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -1086,7 +1199,7 @@ const ChessApp = ({ user }) => {
 
                 {/* ── RIGHT PANEL: MOVES & COACH ── */}
                 {['play', 'puzzles'].includes(activeTab) && (
-                    <aside className="w-full md:w-80 lg:w-96 border-l border-slate-800 bg-[#262421] flex flex-col shrink-0 z-10 shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
+                    <aside className="w-full md:w-80 lg:w-96 border-t md:border-t-0 md:border-l border-slate-800 bg-[#262421] flex flex-col shrink-0 z-10 shadow-[-10px_0_30px_rgba(0,0,0,0.5)] max-h-[40vh] md:max-h-none">
                         <div className="flex bg-[#1b1a18]">
                             <button className="flex-1 py-4 text-sm font-bold text-white border-b-2 border-amber-500 bg-[#262421]">Moves List</button>
                             <button className="flex-1 py-4 text-sm font-semibold text-slate-400 hover:text-white transition-colors">🤖 AI Coach</button>
@@ -1162,15 +1275,51 @@ const ChessApp = ({ user }) => {
             {/* ── PROMOTION MODAL ── */}
             {promotionPending && (
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm">
-                    <div className="rounded-2xl p-6 border border-amber-500/40 bg-slate-900 shadow-[0_0_50px_rgba(245,158,11,0.15)]">
-                        <p className="text-amber-400 text-lg font-bold mb-4 text-center">Promote Pawn To</p>
-                        <div className="flex gap-4">
+                    <div className="rounded-2xl p-4 sm:p-6 border border-amber-500/40 bg-slate-900 shadow-[0_0_50px_rgba(245,158,11,0.15)]">
+                        <p className="text-amber-400 text-base sm:text-lg font-bold mb-3 sm:mb-4 text-center">Promote Pawn To</p>
+                        <div className="flex gap-2 sm:gap-4">
                             {['q','r','b','n'].map(p=>(
-                                <button key={p} onClick={()=>handlePromotion(p)} className="w-20 h-20 rounded-xl flex items-center justify-center border-2 border-slate-600 bg-slate-800 transition-all hover:scale-110 hover:border-amber-400 hover:bg-slate-700">
-                                    <span style={{fontSize:'48px',lineHeight:'1'}}>{PIECE_UNICODE[gameState.turn][p]}</span>
+                                <button key={p} onClick={()=>handlePromotion(p)} className="w-14 h-14 sm:w-20 sm:h-20 rounded-xl flex items-center justify-center border-2 border-slate-600 bg-slate-800 transition-all hover:scale-110 hover:border-amber-400 hover:bg-slate-700">
+                                    <span style={{fontSize:'clamp(32px,8vw,48px)',lineHeight:'1'}}>{PIECE_UNICODE[gameState.turn][p]}</span>
                                 </button>
                             ))}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── MOBILE BOTTOM NAVIGATION ── */}
+            <nav className="md:hidden flex items-center justify-around bg-slate-900 border-t border-slate-800 shrink-0 z-30 py-1 safe-area-bottom">
+                {TABS.slice(0, 5).map(t => (
+                    <button key={t.id} onClick={()=>{
+                        setActiveTab(t.id);
+                        if(t.id==='puzzles'&&!currentPuzzle) fetchPuzzle();
+                        if(t.id==='lichess') { fetchMyAccount(); fetchBoardGames(); }
+                    }}
+                    className={`flex flex-col items-center py-1 px-2 rounded-lg transition-all ${activeTab===t.id ? 'text-amber-400' : 'text-slate-500'}`}>
+                        <span className="text-lg leading-none">{t.icon}</span>
+                        <span className="text-[10px] mt-0.5 font-medium">{t.label.split(' ')[0]}</span>
+                    </button>
+                ))}
+                {TABS.length > 5 && (
+                    <button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} className={`flex flex-col items-center py-1 px-2 rounded-lg transition-all ${TABS.slice(5).some(t=>activeTab===t.id) ? 'text-amber-400' : 'text-slate-500'}`}>
+                        <span className="text-lg leading-none">•••</span>
+                        <span className="text-[10px] mt-0.5 font-medium">More</span>
+                    </button>
+                )}
+            </nav>
+
+            {/* ── MOBILE MORE MENU POPUP ── */}
+            {mobileMenuOpen && (
+                <div className="md:hidden fixed inset-0 z-40" onClick={()=>setMobileMenuOpen(false)}>
+                    <div className="absolute bottom-16 right-3 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-2 min-w-[160px]" onClick={e=>e.stopPropagation()}>
+                        {TABS.slice(5).map(t => (
+                            <button key={t.id} onClick={()=>{setActiveTab(t.id);setMobileMenuOpen(false);}}
+                                className={`w-full flex items-center gap-3 p-3 rounded-lg transition-all text-sm ${activeTab===t.id ? 'bg-amber-600/20 text-amber-400 font-bold' : 'text-slate-300 hover:bg-slate-700'}`}>
+                                <span className="text-lg">{t.icon}</span>
+                                <span>{t.label}</span>
+                            </button>
+                        ))}
                     </div>
                 </div>
             )}
@@ -1203,7 +1352,7 @@ const App = () => {
     },[user]);
 
     if (loading || checking) return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="min-h-[100dvh] flex items-center justify-center bg-slate-950">
             <div className="text-center">
                 <div className="text-7xl float-animate mb-4 text-amber-500">♛</div>
                 <p className="text-slate-400 text-sm font-semibold">{checking ? 'Verifying access…' : 'Loading ChessGPT Elite…'}</p>
