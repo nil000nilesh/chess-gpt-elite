@@ -53,6 +53,6 @@ const PIECE_SETS = [
 ];
 
 const getPieceImg = (color, type, setId) => {
-    const c = color === WHITE ? 'w' : 'b';
-    return `${PIECE_CDN}${setId}/${c}${type.toUpperCase()}.svg`;
+    const c = (color === 'w' || color === 'W' || color === 'white') ? 'w' : 'b';
+    return `${PIECE_CDN}${setId || 'staunty'}/${c}${type.toUpperCase()}.svg`;
 };
